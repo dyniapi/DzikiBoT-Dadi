@@ -1,0 +1,122 @@
+#include "tf_luna_i2c.h"
+#include <string.h>
+
+/* Adres 7-bit 0x10 → HAL (8-bit) = 0x20 */
+#define TFLUNA_ADDR         (0x10U << 1)
+
+/* Ile prób zrobimy, zanim uznamy brak ramki (na 1 wywołanie) */
+#define TFLUNA_READ_TRIES   3
+
+/* ── Uchwyty obu czujników ──────────────────────────────────────────────── */
+static I2C_HandleTypeDef *luna_right = NULL; // I2C1
+static I2C_HandleTypeDef *luna_left  = NULL; // I2C3
+
+void TF_Luna_Right_Init(I2C_HandleTypeDef *hi2c1) { luna_right = hi2c1; }
+void TF_Luna_Left_Init (I2C_HandleTypeDef *hi2c3) { luna_left  = hi2c3; }
+
+/* ── Pomocnicze: suma kontrolna (I2C bez nagłówka)
+   W wielu wersjach I2C checksum = (sum z pierwszych N bajtów) & 0xFF.
+   Dla typowej 9-bajtowej ramki I2C (bez nagłówka) bierzemy sumę z pierwszych 8 bajtów
+   i porównujemy z bajtem 8 (ostatnim). */
+static uint8_t tfluna_checksum_ok(const uint8_t *b, uint8_t len)
+{
+    if (len < 2) return 0;
+    uint16_t sum = 0;
+    for (uint8_t i = 0; i < (len - 1); i++) sum += b[i];
+    return ((sum & 0xFF) == b[len - 1]);
+}
+
+/* ── Walidacja nagłówka (tryb UART/„surowe 0x59 0x59”) ──────────────────── */
+static uint8_t tfluna_is_uart_like_header(const uint8_t *b)
+{
+    return (b[0] == 0x59 && b[1] == 0x59);
+}
+
+/* ── Pojedyncza próba odczytu 9 bajtów ─────────────────────────────────────
+   1) spróbuj „rejestrowo” od 0x00 (I2C_Mem_Read),
+   2) fallback: surowy odczyt Master_Receive.
+*/
+static HAL_StatusTypeDef tfluna_try_read9(I2C_HandleTypeDef *hi2c, uint8_t *buf)
+{
+    HAL_StatusTypeDef st;
+    /* Czytanie od „rejestru” 0x00 – tak bywa w trybie I2C */
+    st = HAL_I2C_Mem_Read(hi2c, TFLUNA_ADDR, 0x00, I2C_MEMADD_SIZE_8BIT, buf, 9, 50);
+    if (st == HAL_OK) return HAL_OK;
+
+    /* Fallback – surowy odczyt 9 bajtów */
+    st = HAL_I2C_Master_Receive(hi2c, TFLUNA_ADDR, buf, 9, 50);
+    return st;
+}
+
+/* ── Dekodery obu layoutów ──────────────────────────────────────────────── */
+/* Layout A (I2C, BEZ nagłówka) – typowy:
+   buf[0] DIST_L, buf[1] DIST_H
+   buf[2] STR_L,  buf[3] STR_H
+   buf[4] TEMP_L, buf[5] TEMP_H  (temp_raw/8 - 256)
+   buf[6] RSV,    buf[7] RSV
+   buf[8] CHECK = sum(buf[0..7]) & 0xFF
+*/
+static uint8_t tfluna_decode_i2c_frame(const uint8_t *b, TF_LunaData_t *out)
+{
+    if (!tfluna_checksum_ok(b, 9)) return 0;
+
+    out->distance    = (uint16_t)(b[0] | (b[1] << 8));
+    out->strength    = (uint16_t)(b[2] | (b[3] << 8));
+    out->temperature = ((int16_t)(b[4] | (b[5] << 8))) / 8.0f - 256.0f;
+    out->frameReady  = 1;
+    return 1;
+}
+
+/* Layout B (UART-like, Z nagłówkiem 0x59 0x59):
+   buf[0]=0x59, buf[1]=0x59
+   buf[2] DIST_L, buf[3] DIST_H
+   buf[4] STR_L,  buf[5] STR_H
+   buf[6] TEMP_L, buf[7] TEMP_H
+   buf[8] SUM (często sum wszystkich poprzednich bajtów & 0xFF, ale bywa ignorowane)
+*/
+static uint8_t tfluna_decode_uart_like(const uint8_t *b, TF_LunaData_t *out)
+{
+    if (!tfluna_is_uart_like_header(b)) return 0;
+
+    out->distance    = (uint16_t)(b[2] | (b[3] << 8));
+    out->strength    = (uint16_t)(b[4] | (b[5] << 8));
+    out->temperature = ((int16_t)(b[6] | (b[7] << 8))) / 8.0f - 256.0f;
+    out->frameReady  = 1;
+    return 1;
+}
+
+/* ── Główny odczyt jednego sensora (tolerancyjny na oba formaty) ────────── */
+static TF_LunaData_t TF_Luna_Read_Generic(I2C_HandleTypeDef *hi2c)
+{
+    TF_LunaData_t out = {0};
+    if (!hi2c) return out;
+
+    uint8_t buf[9];
+
+    for (int attempt = 0; attempt < TFLUNA_READ_TRIES; ++attempt)
+    {
+        if (tfluna_try_read9(hi2c, buf) != HAL_OK) {
+            HAL_Delay(2);
+            continue;
+        }
+
+        /* 1) Spróbuj wariantu I2C bez nagłówka (z checksum) */
+        if (tfluna_decode_i2c_frame(buf, &out)) {
+            return out;
+        }
+
+        /* 2) Spróbuj wariantu z nagłówkiem 0x59 0x59 */
+        if (tfluna_decode_uart_like(buf, &out)) {
+            return out;
+        }
+
+        /* Nie udało się – krótka pauza i kolejna próba */
+        HAL_Delay(2);
+    }
+    /* out.frameReady==0 → main zachowa poprzednie poprawne wartości */
+    return out;
+}
+
+/* Publiczne API – bez zmian */
+TF_LunaData_t TF_Luna_Right_Read(void) { return TF_Luna_Read_Generic(luna_right); }
+TF_LunaData_t TF_Luna_Left_Read (void) { return TF_Luna_Read_Generic(luna_left ); }

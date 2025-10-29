@@ -1,0 +1,372 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Główny program testowy – I2C: TF-Luna + TCS3472 + SSD1306
+  ******************************************************************************
+  *
+  * Sprzęt:
+  *   - STM32 Nucleo-L432KC
+  *   - TF-Luna v1.3 (I2C, 0x10)
+  *   - TCS3472 (I2C, 0x29)
+  *   - SSD1306 OLED (I2C, 0x3C)
+  *
+  * Połączenia I2C:
+  *   PB6 → I2C1_SCL
+  *   PB7 → I2C1_SDA
+  *   GND wspólna, zasilanie 5V dla TCS3472 i TF-Luna (z VIN)
+  *
+  *
+  * Data: 22.10.2025
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include "i2c.h"
+#include "tim.h"
+#include "usart.h"
+#include "gpio.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+
+#include "i2c_scan.h"
+#include "ssd1306.h"       // Wyświetlacz OLED
+#include "tf_luna_i2c.h"   // Czujnik TF-Luna przez I2C
+#include "tcs3472.h"	   // Czujnik koloru przez I2C
+#include "debug_uart.h"    //DEbugowanie na UART
+#include "motor_bldc.h"    //Sterowanie Silnikami BLDC
+#include "motor_test.h"
+#include <stdio.h>
+#include <string.h>
+
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+/* ==== Bufory danych sensorów (Right/Left) ==== */
+static TF_LunaData_t  g_RightLuna = {0}, g_LeftLuna  = {0};
+static TCS3472_Data_t g_RightColor= {0}, g_LeftColor = {0};
+
+/* ==== Interwały odświeżania (ms) ==== */
+static uint32_t tSensors = 0;   // TF-Luna + TCS3472 co 100 ms
+static uint32_t tOLED    = 0;   // OLED co 200 ms
+static uint32_t tUART    = 0;   // UART panel co 200 ms
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+
+/* USER CODE BEGIN PV */
+
+/* --------------------  Zmienne globalne -------------------- */
+//TF_LunaData_t LidarData;   // Dane z czujnika TF-Luna
+TCS3472_Data_t ColorData;
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+/* USER CODE BEGIN PFP */
+
+int __io_putchar(int ch);  // przekierowanie printf przez UART
+
+/* =========================================================== */
+/*                         FUNKCJE                             */
+/* =========================================================== */
+
+/**
+ * @brief  Przekierowanie funkcji printf do UART2
+ *         Umożliwia wyświetlanie danych w terminalu (np. PuTTY)
+ */
+int __io_putchar(int ch)
+{
+    HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+    return ch;
+}
+
+
+
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+
+  /* USER CODE BEGIN 1 */
+
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+
+
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_USART2_UART_Init();
+  MX_I2C1_Init();
+  MX_TIM1_Init();
+  MX_I2C3_Init();
+  /* USER CODE BEGIN 2 */
+
+
+  /* ----------------------------------------------------------------------
+      * 2) Moduły wysokiego poziomu (Twoje pliki .c/.h)
+      * ---------------------------------------------------------------------- */
+     DebugUART_Init(&huart2);
+     DebugUART_Print("[DzikiBoT] Booting...");
+
+     /* (opcjonalnie) drobna pauza – niektóre urządzenia I2C „budzą się” chwilę */
+     HAL_Delay(50);
+
+     /* Skan I2C – szybka diagnoza adresów na obu magistralach */
+     DebugUART_Print("I2C scan start...");
+     I2C_Scan_All();   // -> wypisze urządzenia na Right(I2C1) i Left(I2C3)
+
+     /* OLED – ekran powitalny */
+     SSD1306_Init();
+     SSD1306_SetContrast(0xC0);
+     SSD1306_Clear();
+     SSD1306_DrawText(0, "DzikiBoT v1.0");
+     SSD1306_DrawText(2, "Init peripheries...");
+     SSD1306_UpdateScreen();
+
+     /* ESC – uzbrojenie w neutral (1.5 ms) – bez jazdy na tym etapie */
+     ESC_Init(&htim1);        // start PWM + MOE + neutral
+     ESC_ArmAll(3000);        // 3 sekundy neutral – pewne uzbrojenie obu ESC
+
+     HAL_Delay(1000);// zakłada: PWM CH1/CH4 uruchomiony w MX_TIM1_Init()
+     ESC_SetNeutralAll();
+     DebugUART_Print("ESC initialized (neutral @1500us)");
+     MotorTest_Start(/*ramp_rate=*/3, /*tick_ms=*/20);
+
+     /* TF-Luna (Right/Left) + TCS3472 (Right/Left) – przypisanie do magistral */
+     TF_Luna_Right_Init(&hi2c1);  // RIGHT = I2C1
+     TF_Luna_Left_Init (&hi2c3);  // LEFT  = I2C3
+     TCS3472_Right_Init(&hi2c1);  // RIGHT = I2C1 (pełna konfiguracja rejestrów w module)
+     TCS3472_Left_Init (&hi2c3);  // LEFT  = I2C3
+     DebugUART_Print("Sensors initialized.");
+
+     /* Mała przerwa po inicjalizacji sensorów – stabilizacja */
+
+
+  HAL_Delay(1000);
+
+  /* --- Wykryj urządzenia na magistrali I2C --- */
+
+
+
+
+
+
+  MotorTest_Tick();
+
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+  // Automatyczny test dwóch silników
+      // ESC_TestDual();
+
+
+
+
+	  const uint32_t now = HAL_GetTick();
+
+	        /* 3.1) Odczyt TF-Luna + TCS3472 (co 100 ms) */
+	        if ((now - tSensors) >= 100U)
+	        {
+	        	/* ... w bloku co 100 ms ... */
+	        	TF_LunaData_t tmpR = TF_Luna_Right_Read();
+	        	if (tmpR.frameReady) g_RightLuna = tmpR;
+
+	        	TF_LunaData_t tmpL = TF_Luna_Left_Read();
+	        	if (tmpL.frameReady) g_LeftLuna = tmpL;
+
+
+	        	static uint32_t lastProbe = 0;
+	        	if (HAL_GetTick() - lastProbe > 500) {
+	        	    lastProbe = HAL_GetTick();
+
+	        	}
+
+	        	/* TCS3472 możesz zostawić jak było (one zwykle zawsze zwracają dane): */
+	        	g_RightColor = TCS3472_Right_Read();
+	        	g_LeftColor  = TCS3472_Left_Read();
+
+	            tSensors = now;
+	        }
+
+	        /* 3.2) OLED – panel diagnostyczny 4 linie (co 200 ms) */
+	        if ((now - tOLED) >= 200U)
+	        {
+	            /* Funkcja wysokopoziomowa – rysuje gotowy panel:
+	               0: R/L dystans (cm)
+	               2: R/L siła sygnału
+	               4: R/L clear (jasność) – skala/64
+	               6: R/L temperatura (°C)
+	            */
+	            OLED_ShowSensors(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor);
+	            tOLED = now;
+	        }
+
+	        /* 3.3) UART – panel ANSI (odświeżanie „w miejscu”, co 200 ms) */
+	        if ((now - tUART) >= 200U)
+	        {
+	            DebugUART_SensorsDual(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor);
+	            tUART = now;
+	        }
+
+
+	        MotorTest_Tick();
+
+	        /* 3.4) Miejsce na przyszły algorytm jazdy/AI (osobny moduł)
+	                – w kolejnym kroku dołożymy tank_drive.c/.h i wywołania tutaj */
+	        /* np. AI_Sumo_Update(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor); */
+
+
+
+
+
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+  }
+  /* USER CODE END 3 */
+}
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure LSE Drive Capability
+  */
+  HAL_PWR_EnableBkUpAccess();
+  __HAL_RCC_LSEDRIVE_CONFIG(RCC_LSEDRIVE_LOW);
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSE|RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.LSEState = RCC_LSE_ON;
+  RCC_OscInitStruct.MSIState = RCC_MSI_ON;
+  RCC_OscInitStruct.MSICalibrationValue = 0;
+  RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_6;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_MSI;
+  RCC_OscInitStruct.PLL.PLLM = 1;
+  RCC_OscInitStruct.PLL.PLLN = 40;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV7;
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Enable MSI Auto calibration
+  */
+  HAL_RCCEx_EnableMSIPLLMode();
+}
+
+/* USER CODE BEGIN 4 */
+
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+#ifdef USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */

@@ -1,0 +1,40 @@
+/**
+ * @file    motor_bldc.h
+ * @brief   Obsługa ESC (PWM 50 Hz) – neutral + podstawowe API
+ * @note    Kanały: TIM1_CH1 (PA8) i TIM1_CH4 (PA11)
+ */
+
+#ifndef MOTOR_BLDC_H_
+#define MOTOR_BLDC_H_
+
+#include "main.h"
+#include "tim.h"   // split CubeMX: udostępnia extern TIM_HandleTypeDef htim1
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Inicjalizacja modułu – zapamiętanie uchwytu timera */
+void ESC_Init(TIM_HandleTypeDef *htim);
+
+/* Ustaw neutral (1.5 ms) na obu kanałach */
+void ESC_SetNeutralAll(void);
+
+/* Ustaw impuls w mikrosekundach na danym kanale (np. 1000..2000) */
+void ESC_WriteUs(uint32_t ch, uint16_t pulse_us);
+
+/* Pomocnicza: mapowanie prędkości -100..100 na µs (1000..2000) */
+uint16_t ESC_MapSpeedToUs(int8_t speed);
+
+/* Wygodne aliasy na kanały */
+#ifndef ESC_CH1
+#define ESC_CH1  TIM_CHANNEL_1
+#endif
+#ifndef ESC_CH4
+#define ESC_CH4  TIM_CHANNEL_4
+#endif
+
+#ifdef __cplusplus
+}
+#endif
+#endif /* MOTOR_BLDC_H_ */

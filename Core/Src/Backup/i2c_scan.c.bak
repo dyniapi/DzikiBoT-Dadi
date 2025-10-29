@@ -1,0 +1,75 @@
+/**
+ ******************************************************************************
+ * @file    i2c_scan.c
+ * @brief   Implementacja skanera magistral I2C (Right = I2C1, Left = I2C3)
+ ******************************************************************************
+ */
+
+#include "i2c_scan.h"
+#include "debug_uart.h"   // DebugUART_Printf()
+#include <stdio.h>
+
+/* --- UCHWYTY I2C Z MAIN.C (generuje CubeMX) ------------------------------ */
+extern I2C_HandleTypeDef hi2c1;   // Right bus
+extern I2C_HandleTypeDef hi2c3;   // Left  bus
+
+/* Domyślne parametry skanowania (możesz zmienić, jeśli chcesz) */
+#define I2C_SCAN_START_ADDR   0x08u
+#define I2C_SCAN_END_ADDR     0x77u
+#define I2C_SCAN_TRIALS       2u
+#define I2C_SCAN_TIMEOUT_MS   2u
+
+uint8_t I2C_Scan_Bus(const char* busName,
+                     I2C_HandleTypeDef* hi2c,
+                     uint8_t start7b, uint8_t end7b,
+                     uint8_t trials, uint32_t timeout)
+{
+    if (!hi2c) {
+        DebugUART_Printf("  [%s] ERROR: NULL I2C handle", busName ? busName : "?");
+        return 0;
+    }
+
+    if (start7b < 0x08) start7b = 0x08;   // 0x00..0x07 zarezerwowane
+    if (end7b   > 0x77) end7b   = 0x77;
+
+    DebugUART_Printf("  [%s] scanning 0x%02X..0x%02X ...", busName, start7b, end7b);
+
+    uint8_t found = 0;
+    for (uint8_t addr7 = start7b; addr7 <= end7b; addr7++)
+    {
+        /* HAL używa adresu 8-bit (addr7 << 1) */
+        uint16_t addr8 = (uint16_t)(addr7 << 1);
+
+        HAL_StatusTypeDef st = HAL_I2C_IsDeviceReady(hi2c, addr8, trials, timeout);
+        if (st == HAL_OK)
+        {
+            found++;
+            DebugUART_Printf("    -> Found device at 0x%02X", addr7);
+        }
+        /* HAL_ERROR / HAL_TIMEOUT / HAL_BUSY – ignorujemy, idziemy dalej */
+    }
+
+    if (found == 0) {
+        DebugUART_Printf("  [%s] no devices found.", busName);
+    } else {
+        DebugUART_Printf("  [%s] total: %u device(s).", busName, found);
+    }
+    return found;
+}
+
+void I2C_Scan_All(void)
+{
+    DebugUART_Printf("\r\n[I2C scan] start");
+
+    /* 1) Prawa magistrala – I2C1 (Right) */
+    (void)I2C_Scan_Bus("Right (I2C1)", &hi2c1,
+                       I2C_SCAN_START_ADDR, I2C_SCAN_END_ADDR,
+                       I2C_SCAN_TRIALS, I2C_SCAN_TIMEOUT_MS);
+
+    /* 2) Lewa magistrala – I2C3 (Left) */
+    (void)I2C_Scan_Bus("Left  (I2C3)", &hi2c3,
+                       I2C_SCAN_START_ADDR, I2C_SCAN_END_ADDR,
+                       I2C_SCAN_TRIALS, I2C_SCAN_TIMEOUT_MS);
+
+    DebugUART_Printf("[I2C scan] done\r\n");
+}

@@ -1,0 +1,28 @@
+# build artefacts
+build/
+Debug/
+Release/
+out/
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+*.lst
+
+# IDE
+.settings/
+.vscode/
+*.code-workspace
+
+# CubeMX tymczasowe
+*.launch
+*.ioc-*
+
+# OS śmieci
+.DS_Store
+Thumbs.db
+
+# logi
+*.log

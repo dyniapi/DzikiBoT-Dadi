@@ -1,0 +1,52 @@
+/*
+ * tf_luna_i2c.h
+ *
+ *  Created on: Oct 22, 2025
+ *      Author: dyniapi
+ */
+
+/**
+ ******************************************************************************
+ * @file    tf_luna_i2c.h
+ * @brief   Obsługa czujnika odległości TF-Luna w trybie I2C
+ * @version 1.0
+ * @date    22.10.2025
+ *
+ *  Komunikacja I2C:
+ *  - Domyślny adres: 0x10 (7-bit)
+ *  - Długość ramki danych: 9 bajtów
+ *
+ *  Wersja czujnika: TF-Luna v1.3 (obsługuje I2C)
+
+ *          Rozszerzona wersja do obsługi dwóch czujników:
+ *          - TF-Luna_1 → magistrala I2C1
+ *          - TF-Luna_2 → magistrala I2C3
+ ******************************************************************************
+ */
+#ifndef TF_LUNA_I2C_H_
+#define TF_LUNA_I2C_H_
+
+#include "main.h"
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct {
+    uint16_t distance;     // [cm]
+    uint16_t strength;     // surowa "jakość" sygnału
+    float    temperature;  // [°C]
+    uint8_t  frameReady;   // 1 gdy odczyt poprawny
+} TF_LunaData_t;
+
+/* Right = I2C1, Left = I2C3 */
+void          TF_Luna_Right_Init(I2C_HandleTypeDef *hi2c1);
+void          TF_Luna_Left_Init (I2C_HandleTypeDef *hi2c3);
+TF_LunaData_t TF_Luna_Right_Read(void);
+TF_LunaData_t TF_Luna_Left_Read (void);
+
+#ifdef __cplusplus
+}
+#endif
+#endif /* TF_LUNA_I2C_H_ */
