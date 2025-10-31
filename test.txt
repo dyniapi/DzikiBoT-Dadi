@@ -1,1 +1,29 @@
 hello from DzikiBoT
++DzikiBoT – mini sumo robot (STM32 Nucleo-L432KC)
++================================================
++Cel projektu:
++- zbudować robota mini-sumo z napędem na 2 ESC (BLDC/RC PWM),
++- mieć dwa niezależne kanały I2C (prawy/lewy) do czujników odległości i koloru,
++- wyświetlać dane diagnostyczne na OLED (SSD1306),
++- sterować ruchem przez logikę tank drive z rampą.
++
++Sprzęt / założenia:
++- MCU: STM32 Nucleo-L432KC
++- I2C1 (PB6/PB7) = strona prawa
++- I2C3 (PC0/PC1) = strona lewa
++- czujniki odległości: TF-Luna x2 (adres 0x10) – prawa/lewa
++- czujniki koloru: TCS3472 x2 (adres 0x29) – prawa/lewa
++- OLED: SSD1306 (0x3C) na I2C1
++- napęd: 2x ESC na TIM1:
++    - TIM1 CH1 = PA8 = prawy ESC
++    - TIM1 CH4 = PA11 = lewy ESC
++    - MOE włączony
++    - przy starcie: ESC_ArmNeutral(3000 ms)
++
++Struktura kodu (nasza konwencja):
++- main.c: tylko inicjalizacja i wywołania cykliczne
++- peryferia / logika w osobnych plikach:
++  - tf_luna_i2c.c/.h
++  - tcs3472.c/.h
++  - ssd1306.c/.h + oled_panel.c
++  - motor_bldc.c/.h + tank_drive.c/.h
