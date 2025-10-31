@@ -1,28 +1,74 @@
-# build artefacts
-build/
-Debug/
-Release/
-out/
-*.o
-*.d
-*.elf
-*.bin
-*.hex
-*.map
-*.lst
+# ===== DzikiBoT / STM32CubeIDE 1.19 =====
+# Repozytorium ma zawierać źródła (Core/, Drivers/, Middlewares/, Inc/, Src/)
+# oraz plik konfiguracji CubeMX (*.ioc). Ignorujemy artefakty budowania
+# i pliki lokalne IDE.
 
-# IDE
-.settings/
-.vscode/
-*.code-workspace
-
-# CubeMX tymczasowe
-*.launch
-*.ioc-*
-
-# OS śmieci
+# --- System/OS ---
 .DS_Store
 Thumbs.db
 
-# logi
+# --- Artefakty kompilacji (GCC/arm-none-eabi) ---
+*.o
+*.a
+*.d
+*.elf
+*.map
+*.lst
+*.hex
+*.bin
+*.s19
+*.su
+*.gcno
+*.gcda
+*.gcov
+
+# --- Katalogi buildów ---
+Debug*/
+Release*/
+build/
+Build/
+obj/
+out/
+
+# --- Logi/tymczasowe ---
 *.log
+*.tmp
+*.bak
+*~
+
+# ============== STM32CubeIDE (Eclipse) ==============
+# Pliki/metadane projektu Eclipse/CubeIDE – lokalne, niepotrzebne w repo
+.project
+.cproject
+.settings/
+.metadata/
+.externalToolBuilders/
+.loadpath
+*.launch
+# Preferencje specyficzne dla CubeIDE
+stm32cubeide.project.prefs
+
+# ============== STM32CubeMX ==============
+# ZOSTAW *.ioc w repo (podstawa generacji kodu)!
+# Czasem obok *.ioc pojawiają się pliki/katalogi zależne od środowiska – ignoruj:
+*.mxproject
+MX/
+
+# ============== VS Code (opcjonalnie) ==============
+.vscode/
+
+# ============== Dokumentacja (opcjonalnie) ==============
+/docs/_build/
+
+# ============== DzikiBoT – lokalne artefakty ==============
+*.csv
+*.tsv
+*.dat
+
+# ============== NIE ignoruj ==============
+# Core/
+# Drivers/
+# Middlewares/
+# Inc/
+# Src/
+# *.ioc

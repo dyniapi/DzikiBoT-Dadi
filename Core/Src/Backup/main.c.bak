@@ -1,23 +1,29 @@
 /* USER CODE BEGIN Header */
 /**
+ TEST GIT
   ******************************************************************************
   * @file           : main.c
-  * @brief          : Główny program testowy – I2C: TF-Luna + TCS3472 + SSD1306
-  ******************************************************************************
+  * @brief          : Główny program DzikiBoT (STM32L432KC)
   *
-  * Sprzęt:
-  *   - STM32 Nucleo-L432KC
-  *   - TF-Luna v1.3 (I2C, 0x10)
-  *   - TCS3472 (I2C, 0x29)
-  *   - SSD1306 OLED (I2C, 0x3C)
+  * Funkcje:
+  *  - Inicjalizacja peryferiów (GPIO, USART2, I2C1/I2C3, TIM1)
+  *  - Uruchomienie modułów wysokiego poziomu:
+  *      • Debug UART (panel na żywo w terminalu)
+  *      • I2C skan (diagnostyka adresów)
+  *      • SSD1306 (OLED 128x64 – 7 linii)
+  *      • TF-Luna (Right=I2C1, Left=I2C3) – odporne I2C
+  *      • TCS3472 (Right=I2C1, Left=I2C3)
+  *      • ESC BLDC (TIM1 CH1=PA8 [Right], CH4=PA11 [Left]) + uzbrajanie
+  *      • TankDrive – sterowanie dwoma ESC (rampa, nieblokujące)
   *
-  * Połączenia I2C:
-  *   PB6 → I2C1_SCL
-  *   PB7 → I2C1_SDA
-  *   GND wspólna, zasilanie 5V dla TCS3472 i TF-Luna (z VIN)
+  * Pętla główna:
+  *  - co 100 ms: odczyt sensorów (TF-Luna + TCS3472)
+  *  - co 200 ms: rysowanie OLED i panel Debug UART
+  *  - co ~tick_ms: Tank_Update() (np. co 20 ms) – rampa i wyjścia PWM
   *
-  *
-  * Data: 22.10.2025
+  * Uwaga:
+  *  - Kod modułowy: główna logika w plikach .c/.h, a w main.c tylko
+  *    minimalna sekwencja inicjalizacji oraz wywołania okresowe.
   ******************************************************************************
   */
 /* USER CODE END Header */
@@ -31,34 +37,43 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
-#include "i2c_scan.h"
-#include "ssd1306.h"       // Wyświetlacz OLED
-#include "tf_luna_i2c.h"   // Czujnik TF-Luna przez I2C
-#include "tcs3472.h"	   // Czujnik koloru przez I2C
-#include "debug_uart.h"    //DEbugowanie na UART
-#include "motor_bldc.h"    //Sterowanie Silnikami BLDC
-
+/* ====== Moduły własne (osobne pliki) ===================================== */
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
+
+
+/* --- Moduły projektu (OSOBNE pliki, trzymamy porządek) --- */
+#include "tf_luna_i2c.h"   /* TF-Luna (I2C) Right/Left */
+#include "tcs3472.h"       /* TCS3472 Right/Left       */
+#include "ssd1306.h"       /* Niski driver OLED        */
+#include "oled_panel.h"    /* Warstwa prezentacji: panel 7 linii na OLED */
+#include "debug_uart.h"    /* ANSI panel po UART       */
+#include "i2c_scan.h"      /* Skany I2C (Right/Left)   */
+
+#include "config.h"       /* CFG_Motors(): tick, rampa, kompensacja, okno 30..60% */
+#include "motor_bldc.h"   /* ESC_Init, ESC_ArmNeutral, ESC_Write* */
+#include "tank_drive.h"   /* Tank_Init, Tank_Update, API manewrów */
+#include "drive_test.h"
+
+
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-/* ==== Bufory danych sensorów (Right/Left) ==== */
-static TF_LunaData_t  g_RightLuna = {0}, g_LeftLuna  = {0};
-static TCS3472_Data_t g_RightColor= {0}, g_LeftColor = {0};
-
-/* ==== Interwały odświeżania (ms) ==== */
-static uint32_t tSensors = 0;   // TF-Luna + TCS3472 co 100 ms
-static uint32_t tOLED    = 0;   // OLED co 200 ms
-static uint32_t tUART    = 0;   // UART panel co 200 ms
 
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+
+/* ==== Okresy zadań (ms) – spokojne, czytelne ticki ==== */
+#define PERIOD_TANK_MS     20U   /* Tank_Update (rampa)   – co 20 ms */
+#define PERIOD_SENS_MS    100U   /* Odczyty sensorów      – co 100 ms */
+#define PERIOD_OLED_MS    200U   /* Odświeżanie OLED      – co 200 ms */
+#define PERIOD_UART_MS    200U   /* Panel UART            – co 200 ms */
 
 
 /* USER CODE END PD */
@@ -72,9 +87,21 @@ static uint32_t tUART    = 0;   // UART panel co 200 ms
 
 /* USER CODE BEGIN PV */
 
-/* --------------------  Zmienne globalne -------------------- */
-//TF_LunaData_t LidarData;   // Dane z czujnika TF-Luna
-TCS3472_Data_t ColorData;
+/* Bufory danych czujników (Right=I2C1, Left=I2C3) */
+/* ==== Bufory na „ostatnie dobre” pomiary – prosto dostępne w całym main ==== */
+static TF_LunaData_t   g_RightLuna = {0};
+static TF_LunaData_t   g_LeftLuna  = {0};
+static TCS3472_Data_t  g_RightColor= {0};
+static TCS3472_Data_t  g_LeftColor = {0};
+
+
+/* Zegary odświeżania */
+static uint32_t tTank = 0;
+static uint32_t tSens = 0;
+static uint32_t tOLED = 0;
+static uint32_t tUART = 0;
+
+
 
 /* USER CODE END PV */
 
@@ -82,7 +109,7 @@ TCS3472_Data_t ColorData;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
-int __io_putchar(int ch);  // przekierowanie printf przez UART
+//int __io_putchar(int ch);  // przekierowanie printf przez UART
 
 /* =========================================================== */
 /*                         FUNKCJE                             */
@@ -105,6 +132,8 @@ int __io_putchar(int ch)
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+
 
 /* USER CODE END 0 */
 
@@ -149,50 +178,47 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
 
-  /* ----------------------------------------------------------------------
-      * 2) Moduły wysokiego poziomu (Twoje pliki .c/.h)
-      * ---------------------------------------------------------------------- */
-     DebugUART_Init(&huart2);
-     DebugUART_Print("[DzikiBoT] Booting...");
+  /* 3) Debug UART + I2C scan */
+    DebugUART_Init(&huart2);
+    DebugUART_Printf("\r\n=== DzikiBoT – start (clean) ===");
+    DebugUART_Printf("UART ready @115200 8N1");
+    I2C_Scan_All();            /* korzysta z hi2c1 i hi2c3 */
 
-     /* (opcjonalnie) drobna pauza – niektóre urządzenia I2C „budzą się” chwilę */
-     HAL_Delay(50);
+    /* 4) Sensory + OLED */
+    TF_Luna_Right_Init(&hi2c1);  /* Right (I2C1) */
+    TF_Luna_Left_Init (&hi2c3);  /* Left  (I2C3) */
 
-     /* Skan I2C – szybka diagnoza adresów na obu magistralach */
-     DebugUART_Print("I2C scan start...");
-     I2C_Scan_All();   // -> wypisze urządzenia na Right(I2C1) i Left(I2C3)
+    TCS3472_Right_Init(&hi2c1);  /* Right (I2C1) */
+    TCS3472_Left_Init (&hi2c3);  /* Left  (I2C3) */
 
-     /* OLED – ekran powitalny */
-     SSD1306_Init();
-     SSD1306_Clear();
-     SSD1306_DrawText(0, "DzikiBoT v1.0");
-     SSD1306_DrawText(2, "Init peripheries...");
-     SSD1306_UpdateScreen();
+    SSD1306_Init();               /* Twój driver: void, bez argumentów */
+    DebugUART_Printf("SSD1306 init OK.");
 
-     /* ESC – uzbrojenie w neutral (1.5 ms) – bez jazdy na tym etapie */
-     ESC_Init(&htim1);            // zakłada: PWM CH1/CH4 uruchomiony w MX_TIM1_Init()
-     ESC_SetNeutralAll();
-     DebugUART_Print("ESC initialized (neutral @1500us)");
+    /* 5) ESC + TankDrive (parametry z config) */
+    ESC_Init(&htim1);
+    ESC_ArmNeutral(3000);         /* proste, pewne ARM – neutral 1500us przez 3 s */
 
-     /* TF-Luna (Right/Left) + TCS3472 (Right/Left) – przypisanie do magistral */
-     TF_Luna_Right_Init(&hi2c1);  // RIGHT = I2C1
-     TF_Luna_Left_Init (&hi2c3);  // LEFT  = I2C3
-     TCS3472_Right_Init(&hi2c1);  // RIGHT = I2C1 (pełna konfiguracja rejestrów w module)
-     TCS3472_Left_Init (&hi2c3);  // LEFT  = I2C3
-     DebugUART_Print("Sensors initialized.");
-
-     /* Mała przerwa po inicjalizacji sensorów – stabilizacja */
-
-
-  HAL_Delay(1000);
-
-  /* --- Wykryj urządzenia na magistrali I2C --- */
+    Tank_Init(&htim1);            /* rampa/EMA/kompensacja/okno 30..60% → z CFG_Motors() */
+    DriveTest_Start();			//test silników
 
 
 
 
 
 
+
+
+    DebugUART_Printf("ESC + TankDrive ready.");
+
+    /* 6) Pierwsze odczyty – zasianie struktur */
+    g_RightLuna = TF_Luna_Right_Read();
+    g_LeftLuna  = TF_Luna_Left_Read();
+    g_RightColor= TCS3472_Right_Read();
+    g_LeftColor = TCS3472_Left_Read();
+
+    /* 7) Pętla główna – tylko okresowe ticki (bez testów) */
+ //   const uint16_t tick_ms = CFG_Motors()->tick_ms;  /* np. 20 ms – źródło prawdy */
+    tTank = tSens = tOLED = tUART = HAL_GetTick();
 
 
   /* USER CODE END 2 */
@@ -201,48 +227,55 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-  // Automatyczny test dwóch silników
-      // ESC_TestDual();
-
 
 	  const uint32_t now = HAL_GetTick();
 
-	        /* 3.1) Odczyt TF-Luna + TCS3472 (co 100 ms) */
-	        if ((now - tSensors) >= 100U)
-	        {
-	        	/* ... w bloku co 100 ms ... */
-	        	TF_LunaData_t tmpR = TF_Luna_Right_Read();
-	        	if (tmpR.frameReady) g_RightLuna = tmpR;
 
-	        	TF_LunaData_t tmpL = TF_Luna_Left_Read();
-	        	if (tmpL.frameReady) g_LeftLuna = tmpL;
+	  /* 7.1) Tank – rampa/wygładzenie/kompensacja + test (co tick_ms z config) */
+	  if ((now - tTank) >= CFG_Motors()->tick_ms) {
+	    Tank_Update();
+	    DriveTest_Tick();     // test krokowy w tle
+	    tTank = now;
+	  }
 
-	        	/* TCS3472 możesz zostawić jak było (one zwykle zawsze zwracają dane): */
-	        	g_RightColor = TCS3472_Right_Read();
-	        	g_LeftColor  = TCS3472_Left_Read();
 
-	            tSensors = now;
-	        }
 
-	        /* 3.2) OLED – panel diagnostyczny 4 linie (co 200 ms) */
-	        if ((now - tOLED) >= 200U)
-	        {
-	            /* Funkcja wysokopoziomowa – rysuje gotowy panel:
-	               0: R/L dystans (cm)
-	               2: R/L siła sygnału
-	               4: R/L clear (jasność) – skala/64
-	               6: R/L temperatura (°C)
-	            */
-	            OLED_ShowSensors(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor);
-	            tOLED = now;
-	        }
+	      /* 7.2) Sensory (TF-Luna + TCS3472) */
+	      if ((now - tSens) >= PERIOD_SENS_MS) {
 
-	        /* 3.3) UART – panel ANSI (odświeżanie „w miejscu”, co 200 ms) */
-	        if ((now - tUART) >= 200U)
-	        {
-	            DebugUART_SensorsDual(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor);
-	            tUART = now;
-	        }
+	    	TF_LunaData_t r = TF_Luna_Right_Read();
+	        TF_LunaData_t l = TF_Luna_Left_Read();
+	        if (r.frameReady) g_RightLuna = r;  /* aktualizuj tylko „nową dobrą” ramką */
+	        if (l.frameReady) g_LeftLuna  = l;
+
+	        g_RightColor = TCS3472_Right_Read();
+	        g_LeftColor  = TCS3472_Left_Read();
+
+	        tSens = now;
+	      }
+
+	      /* 7.3) OLED: panel 7 linii (wyniesiony do oled_panel.*) */
+	      if ((now - tOLED) >= PERIOD_OLED_MS) {
+	        OLED_Panel_ShowSensors(&g_RightLuna, &g_LeftLuna,
+	                               &g_RightColor, &g_LeftColor);
+	        tOLED = now;
+	      }
+
+	      /* 7.4) UART: panel ANSI „w miejscu” (debug) */
+	      if ((now - tUART) >= PERIOD_UART_MS) {
+	        DebugUART_SensorsDual(&g_RightLuna, &g_LeftLuna,
+	                              &g_RightColor, &g_LeftColor);
+	        tUART = now;
+	      }
+
+	      /* 7.5) (Miejsce na AI Sumo – w przyszłości)
+	         AI_Sumo_Update(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor);
+	         // AI ustawi docelowe prędkości przez Tank_SetTarget / Tank_*()
+	       */
+
+	    /* (Miejsce na przyszłą logikę AI Sumo – osobny moduł)
+	       np.: AI_Sumo_Update(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor);
+	       która w razie potrzeby wywoła Tank_SetSpeed(left,right). */
 
 	        /* 3.4) Miejsce na przyszły algorytm jazdy/AI (osobny moduł)
 	                – w kolejnym kroku dołożymy tank_drive.c/.h i wywołania tutaj */

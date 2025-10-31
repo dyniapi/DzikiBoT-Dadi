@@ -132,10 +132,13 @@ static void ssd1306_sendCommand(uint8_t cmd)
     HAL_I2C_Master_Transmit(I2C_H, SSD1306_I2C_ADDR, buf, 2, 100);
 }
 
+
+/*
 static void ssd1306_sendCommands(const uint8_t *cmds, uint16_t n)
 {
     while (n--) ssd1306_sendCommand(*cmds++);
 }
+*/
 
 static void ssd1306_sendData(const uint8_t *data, uint16_t n)
 {
@@ -276,29 +279,49 @@ void SSD1306_DrawTextAt(uint8_t page, uint8_t x, const char *text)
 
 /* =================== Sekcja: panel diagnostyczny DzikiBoT ================= */
 
+/* ----- PANEL OLED: 7 linii (Title + Dist / Str / Temp / Clear / RGB R / RGB L) ----- */
 void OLED_ShowSensors(const TF_LunaData_t *R, const TF_LunaData_t *L,
                       const TCS3472_Data_t *CR, const TCS3472_Data_t *CL)
 {
     char line[32];
 
-    /* Czyścimy ekran i rysujemy 4 linie co 2 strony (czytelne odstępy) */
     SSD1306_Clear();
 
-    /* Linia 1 – dystanse (cm) */
-    snprintf(line, sizeof(line), "R:%3ucm  L:%3ucm", R->distance, L->distance);
-    SSD1306_DrawTextAt(0, 0, line);
+    /* Linia 0: tytuł (kompaktowy) */
+    SSD1306_DrawTextAt(0, 0, "     DzikiBoT    ");
 
-    /* Linia 2 – siła sygnału */
-    snprintf(line, sizeof(line), "Sr:%4u Sl:%4u", R->strength, L->strength);
+    /* Linia 1: dystans [cm] — krótko, żeby się mieściło */
+    snprintf(line, sizeof(line), "D  R:%3ucm   L:%3ucm",
+             (unsigned)R->distance, (unsigned)L->distance);
+    SSD1306_DrawTextAt(1, 0, line);
+
+    /* Linia 2: siła sygnału */
+    snprintf(line, sizeof(line), "S  R:%5u   L:%5u",
+             (unsigned)R->strength, (unsigned)L->strength);
     SSD1306_DrawTextAt(2, 0, line);
 
-    /* Linia 3 – jasnosc (clear) podzielona przez 64 dla skrócenia wyświetlania */
-    snprintf(line, sizeof(line), "CR:%4u CL:%4u", CR->clear/64, CL->clear/64);
+    /* Linia 3: temperatura [°C] – masz włączony float */
+    snprintf(line, sizeof(line), "T  R:%4.1fC  L:%4.1fC",
+             R->temperature, L->temperature);
+    SSD1306_DrawTextAt(3, 0, line);
+
+    /* Linia 4: jasnosc (clear) — /64, by skrócić liczby */
+    snprintf(line, sizeof(line), "C  R:%4u    L:%4u",
+             (unsigned)(CR->clear / 64U), (unsigned)(CL->clear / 64U));
     SSD1306_DrawTextAt(4, 0, line);
 
-    /* Linia 4 – temperatury (°C) z TF-Luna */
-    snprintf(line, sizeof(line), "TR:%2.1f TL:%2.1f", R->temperature, L->temperature);
+    /* Linia 5: RGB Right (skalowane /64) */
+    snprintf(line, sizeof(line), "RGB R:%3u,%3u,%3u",
+             (unsigned)(CR->red/64U), (unsigned)(CR->green/64U), (unsigned)(CR->blue/64U));
+    SSD1306_DrawTextAt(5, 0, line);
+
+    /* Linia 6: RGB Left (skalowane /64) */
+    snprintf(line, sizeof(line), "RGB L:%3u,%3u,%3u",
+             (unsigned)(CL->red/64U), (unsigned)(CL->green/64U), (unsigned)(CL->blue/64U));
     SSD1306_DrawTextAt(6, 0, line);
+
+    /* (opcjonalnie) cienka kreska oddzielająca tytuł od danych:
+       SSD1306_DrawHLine(7, 0, 127); // y=7 (między page 0 i 1) */
 
     SSD1306_UpdateScreen();
 }

@@ -1,54 +1,97 @@
 #include "debug_uart.h"
-#include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
+#include <stdio.h>    // prototypy printf/snprintf/vsnprintf
+#include <stdarg.h>   // jeśli używasz va_list / vsnprintf (np. w debug_uart.c)
 
-static UART_HandleTypeDef *dbg_uart = NULL;
 
-void DebugUART_Init(UART_HandleTypeDef *huart) { dbg_uart = huart; }
+/* ====== prywatny uchwyt ====== */
+static UART_HandleTypeDef *s_uart = NULL;
 
-void DebugUART_Print(const char *msg)
+void DebugUART_Init(UART_HandleTypeDef *huart)
 {
-    if (!dbg_uart || !msg) return;
-    HAL_UART_Transmit(dbg_uart, (uint8_t*)msg, (uint16_t)strlen(msg), HAL_MAX_DELAY);
-    const char *crlf = "\r\n";
-    HAL_UART_Transmit(dbg_uart, (uint8_t*)crlf, 2, HAL_MAX_DELAY);
+    s_uart = huart;
 }
 
-/* NOWE: wersja printf-like */
+void DebugUART_Print(const char *s)
+{
+    if (!s_uart || !s) return;
+    HAL_UART_Transmit(s_uart, (uint8_t*)s, (uint16_t)strlen(s), HAL_MAX_DELAY);
+    const char crlf[2] = "\r\n";
+    HAL_UART_Transmit(s_uart, (uint8_t*)crlf, 2, HAL_MAX_DELAY);
+}
+
 void DebugUART_Printf(const char *fmt, ...)
 {
-    if (!dbg_uart || !fmt) return;
-
-    char buf[256];
+    if (!s_uart || !fmt) return;
+    char buf[160];
     va_list ap;
     va_start(ap, fmt);
-    int len = vsnprintf(buf, sizeof(buf), fmt, ap);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
-
-    if (len < 0) return;
-    if (len > (int)sizeof(buf)) len = (int)sizeof(buf);
-
-    HAL_UART_Transmit(dbg_uart, (uint8_t*)buf, (uint16_t)len, HAL_MAX_DELAY);
-    const char *crlf = "\r\n";
-    HAL_UART_Transmit(dbg_uart, (uint8_t*)crlf, 2, HAL_MAX_DELAY);
+    DebugUART_Print(buf);
 }
 
-/* Bez zmian */
-void DebugUART_SensorsDual(const TF_LunaData_t *R, const TF_LunaData_t *L,
-                           const TCS3472_Data_t *CR, const TCS3472_Data_t *CL)
+/* Czyść ekran i przejdź do (1,1) */
+static void term_clear(void)
 {
-    if (!dbg_uart) return;
-    char buf[512];
-    int len = snprintf(buf, sizeof(buf),
-        "\033[2J\033[H"
-        "              RIGHT (I2C1)              |               LEFT (I2C3)\r\n"
-        "----------------------------------------+----------------------------------------\r\n"
-        " Dist: %4ucm   Strength:%5u   Temp:%5.1fC | Dist: %4ucm   Strength:%5u   Temp:%5.1fC\r\n"
-        " R:%4u G:%4u B:%4u C:%5u            | R:%4u G:%4u B:%4u C:%5u\r\n",
-        R->distance, R->strength, R->temperature,
-        L->distance, L->strength, L->temperature,
-        CR->red/64, CR->green/64, CR->blue/64, CR->clear/64,
-        CL->red/64, CL->green/64, CL->blue/64, CL->clear/64
-    );
-    if (len > 0) HAL_UART_Transmit(dbg_uart, (uint8_t*)buf, (uint16_t)len, HAL_MAX_DELAY);
+    const char *cmd = "\x1b[2J\x1b[H";
+    HAL_UART_Transmit(s_uart, (uint8_t*)cmd, (uint16_t)strlen(cmd), HAL_MAX_DELAY);
+}
+
+/* Dwukolumnowy panel: RIGHT(I2C1) | LEFT(I2C3)
+   - pokazuje status ramki (OK/NO FRAME)
+   - wartości przefiltrowane (DIST=MED5, STR=MA5), temperatura w °C (float) */
+
+
+void DebugUART_SensorsDual(const TF_LunaData_t *RightLuna,
+                           const TF_LunaData_t *LeftLuna,
+                           const TCS3472_Data_t *RightColor,
+                           const TCS3472_Data_t *LeftColor)
+{
+    if (!s_uart || !RightLuna || !LeftLuna || !RightColor || !LeftColor) return;
+
+    term_clear();
+
+    char line[160];
+    const char *stR = RightLuna->frameReady ? "OK " : "NO FRAME";
+    const char *stL = LeftLuna->frameReady  ? "OK " : "NO FRAME";
+
+    DebugUART_Print("                  DzikiBoT (Parametry Sensorów)");
+    DebugUART_Print( "-------------------------------+-------------------------------------");
+    DebugUART_Print("            RIGHT (I2C1)       |               LEFT (I2C3)");
+    DebugUART_Print( "-------------------------------+-------------------------------------");
+
+    /* DIST – używamy MED5 (distance_filt) */
+    snprintf(line, sizeof(line),
+             " Dist:  %4ucm  (%-8s)     | Dist:  %4ucm  (%-8s)",
+             (unsigned)RightLuna->distance_filt, stR,
+             (unsigned)LeftLuna->distance_filt,  stL);
+    DebugUART_Print(line);
+
+    /* STR – używamy MA5 (strength_filt) */
+    snprintf(line, sizeof(line),
+             " Str : %5u                   | Str : %5u",
+             (unsigned)RightLuna->strength_filt,
+             (unsigned)LeftLuna->strength_filt);
+    DebugUART_Print(line);
+
+    /* TEMP – w °C (driver zwraca już float °C) */
+    snprintf(line, sizeof(line),
+             " Temp: %5.1f C                 | Temp: %5.1f C",
+             RightLuna->temperature, LeftLuna->temperature);
+    DebugUART_Print(line);
+
+    DebugUART_Print( "-------------------------------+-------------------------------------");
+
+    /* RGB/C (skalowane /64, tak jak wcześniej) */
+    {
+        unsigned rR = RightColor->red/64U, gR = RightColor->green/64U, bR = RightColor->blue/64U, cR = RightColor->clear/64U;
+        unsigned rL = LeftColor->red/64U,  gL = LeftColor->green/64U,  bL = LeftColor->blue/64U,  cL = LeftColor->clear/64U;
+
+        snprintf(line, sizeof(line),
+                 " R:%4u G:%4u B:%4u C:%5u  | R:%4u G:%4u B:%4u C:%5u",
+                 rR, gR, bR, cR, rL, gL, bL, cL);
+        DebugUART_Print(line);
+    }
 }

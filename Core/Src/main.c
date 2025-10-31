@@ -1,4 +1,3 @@
-
 /* USER CODE BEGIN Header */
 /**
  TEST GIT
@@ -28,7 +27,6 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
-
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "i2c.h"
@@ -109,19 +107,6 @@ static uint32_t tUART = 0;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-void MX_GPIO_Init(void);
-void MX_I2C1_Init(void);
-void MX_I2C3_Init(void);
-void MX_USART2_UART_Init(void);
-void MX_TIM1_Init(void);
-
-
-
-
-
-
-
-
 /* USER CODE BEGIN PFP */
 
 //int __io_putchar(int ch);  // przekierowanie printf przez UART
@@ -186,10 +171,10 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_I2C1_Init();
-  MX_I2C3_Init();
   MX_USART2_UART_Init();
+  MX_I2C1_Init();
   MX_TIM1_Init();
+  MX_I2C3_Init();
   /* USER CODE BEGIN 2 */
 
 

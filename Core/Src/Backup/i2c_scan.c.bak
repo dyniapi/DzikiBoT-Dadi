@@ -72,4 +72,5 @@ void I2C_Scan_All(void)
                        I2C_SCAN_TRIALS, I2C_SCAN_TIMEOUT_MS);
 
     DebugUART_Printf("[I2C scan] done\r\n");
+    HAL_Delay(500);
 }
