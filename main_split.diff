@@ -1,0 +1,200 @@
+diff --git a/Core/Src/main.c b/Core/Src/main.c
+index 0000000..1111111 100644
+--- a/Core/Src/main.c
++++ b/Core/Src/main.c
+@@ -46,6 +46,15 @@ void SystemClock_Config(void);
+ /* USER CODE BEGIN PFP */
+ 
+ //int __io_putchar(int ch);  // przekierowanie printf przez UART
++
++/* Aplikacja DzikiBoT – inicjalizacja i pętla okresowa
++ * (zostawiamy w tym pliku, ale oddzielamy od main()) */
++static void App_Init(void);
++static void App_Tick(void);
++
+@@ -119,65 +128,11 @@ int main(void)
+   MX_I2C3_Init();
+   /* USER CODE BEGIN 2 */
+ 
+-
+-  /* 3) Debug UART + I2C scan */
+-    DebugUART_Init(&huart2);
+-    DebugUART_Printf("\r\n=== DzikiBoT – start (clean) ===");
+-    DebugUART_Printf("UART ready @115200 8N1");
+-    I2C_Scan_All();            /* korzysta z hi2c1 i hi2c3 */
+-
+-    /* 4) Sensory + OLED */
+-    TF_Luna_Right_Init(&hi2c1);  /* Right (I2C1) */
+-    TF_Luna_Left_Init (&hi2c3);  /* Left  (I2C3) */
+-
+-    TCS3472_Right_Init(&hi2c1);  /* Right (I2C1) */
+-    TCS3472_Left_Init (&hi2c3);  /* Left  (I2C3) */
+-
+-    SSD1306_Init();               /* Twój driver: void, bez argumentów */
+-    DebugUART_Printf("SSD1306 init OK.");
+-
+-    /* 5) ESC + TankDrive (parametry z config) */
+-    ESC_Init(&htim1);
+-    ESC_ArmNeutral(3000);         /* proste, pewne ARM – neutral 1500us przez 3 s */
+-
+-    Tank_Init(&htim1);            /* rampa/EMA/kompensacja/okno 30..60% → z CFG_Motors() */
+-    DriveTest_Start();			//test silników
+-
+-    DebugUART_Printf("ESC + TankDrive ready.");
+-
+-    /* 6) Pierwsze odczyty – zasianie struktur */
+-    g_RightLuna = TF_Luna_Right_Read();
+-    g_LeftLuna  = TF_Luna_Left_Read();
+-    g_RightColor= TCS3472_Right_Read();
+-    g_LeftColor = TCS3472_Left_Read();
+-
+-    /* 7) Pętla główna – tylko okresowe ticki (bez testów) */
+- //   const uint16_t tick_ms = CFG_Motors()->tick_ms;  /* np. 20 ms – źródło prawdy */
+-    tTank = tSens = tOLED = tUART = HAL_GetTick();
++  /* Aplikacja DzikiBoT – wszystko w jednej funkcji */
++  App_Init();
+ 
+   /* USER CODE END 2 */
+@@ -188,64 +143,9 @@ int main(void)
+   while (1)
+   {
+-
+-	  const uint32_t now = HAL_GetTick();
+-
+-
+-	  /* 7.1) Tank – rampa/wygładzenie/kompensacja + test (co tick_ms z config) */
+-	  if ((now - tTank) >= CFG_Motors()->tick_ms) {
+-	    Tank_Update();
+-	    DriveTest_Tick();     // test krokowy w tle
+-	    tTank = now;
+-	  }
+-
+-	      /* 7.2) Sensory (TF-Luna + TCS3472) */
+-	      if ((now - tSens) >= PERIOD_SENS_MS) {
+-
+-	    	TF_LunaData_t r = TF_Luna_Right_Read();
+-	        TF_LunaData_t l = TF_Luna_Left_Read();
+-	        if (r.frameReady) g_RightLuna = r;  /* aktualizuj tylko „nową dobrą” ramką */
+-	        if (l.frameReady) g_LeftLuna  = l;
+-
+-	        g_RightColor = TCS3472_Right_Read();
+-	        g_LeftColor  = TCS3472_Left_Read();
+-
+-	        tSens = now;
+-	      }
+-
+-	      /* 7.3) OLED: panel 7 linii (wyniesiony do oled_panel.*) */
+-	      if ((now - tOLED) >= PERIOD_OLED_MS) {
+-	        OLED_Panel_ShowSensors(&g_RightLuna, &g_LeftLuna,
+-	                               &g_RightColor, &g_LeftColor);
+-	        tOLED = now;
+-	      }
+-
+-	      /* 7.4) UART: panel ANSI „w miejscu” (debug) */
+-	      if ((now - tUART) >= PERIOD_UART_MS) {
+-	        DebugUART_SensorsDual(&g_RightLuna, &g_LeftLuna,
+-	                              &g_RightColor, &g_LeftColor);
+-	        tUART = now;
+-	      }
+-
+-	      /* 7.5) (Miejsce na AI Sumo – w przyszłości)
+-	         AI_Sumo_Update(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor);
+-	         // AI ustawi docelowe prędkości przez Tank_SetTarget / Tank_*()
+-	       */
+-
+-	    /* (Miejsce na przyszłą logikę AI Sumo – osobny moduł)
+-	       np.: AI_Sumo_Update(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor);
+-	       która w razie potrzeby wywoła Tank_SetSpeed(left,right). */
+-
+-	        /* 3.4) Miejsce na przyszły algorytm jazdy/AI (osobny moduł)
+-	                – w kolejnym kroku dołożymy tank_drive.c/.h i wywołania tutaj */
+-	        /* np. AI_Sumo_Update(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor); */
++    App_Tick();
+@@ -268,6 +168,106 @@ void SystemClock_Config(void)
+   HAL_RCCEx_EnableMSIPLLMode();
+ }
+ 
++/* USER CODE BEGIN 4 */
++
++/* =========================
++ *  APLIKACJA DZIKIBOT
++ * ========================= */
++static void App_Init(void)
++{
++    /* 3) Debug UART + I2C scan */
++    DebugUART_Init(&huart2);
++    DebugUART_Printf("\r\n=== DzikiBoT – start (clean) ===");
++    DebugUART_Printf("UART ready @115200 8N1");
++    I2C_Scan_All();            /* korzysta z hi2c1 i hi2c3 */
++
++    /* 4) Sensory + OLED */
++    TF_Luna_Right_Init(&hi2c1);  /* Right (I2C1) */
++    TF_Luna_Left_Init (&hi2c3);  /* Left  (I2C3) */
++
++    TCS3472_Right_Init(&hi2c1);  /* Right (I2C1) */
++    TCS3472_Left_Init (&hi2c3);  /* Left  (I2C3) */
++
++    SSD1306_Init();               /* Twój driver: void, bez argumentów */
++    DebugUART_Printf("SSD1306 init OK.");
++
++    /* 5) ESC + TankDrive (parametry z config) */
++    ESC_Init(&htim1);
++    ESC_ArmNeutral(3000);         /* proste, pewne ARM – neutral 1500us przez 3 s */
++
++    Tank_Init(&htim1);            /* rampa/EMA/kompensacja/okno 30..60% → z CFG_Motors() */
++    DriveTest_Start();            /* test silników */
++    DebugUART_Printf("ESC + TankDrive ready.");
++
++    /* 6) Pierwsze odczyty – zasianie struktur */
++    g_RightLuna = TF_Luna_Right_Read();
++    g_LeftLuna  = TF_Luna_Left_Read();
++    g_RightColor= TCS3472_Right_Read();
++    g_LeftColor = TCS3472_Left_Read();
++
++    /* Ticki startowe */
++    tTank = tSens = tOLED = tUART = HAL_GetTick();
++}
++
++static void App_Tick(void)
++{
++    const uint32_t now = HAL_GetTick();
++
++    /* 1) Napęd – rampa/test */
++    if ((now - tTank) >= CFG_Motors()->tick_ms) {
++        Tank_Update();
++        DriveTest_Tick();     /* test krokowy w tle */
++        tTank = now;
++    }
++
++    /* 2) Sensory (TF-Luna + TCS3472) */
++    if ((now - tSens) >= PERIOD_SENS_MS) {
++        TF_LunaData_t r = TF_Luna_Right_Read();
++        TF_LunaData_t l = TF_Luna_Left_Read();
++        if (r.frameReady) g_RightLuna = r;
++        if (l.frameReady) g_LeftLuna  = l;
++
++        g_RightColor = TCS3472_Right_Read();
++        g_LeftColor  = TCS3472_Left_Read();
++
++        tSens = now;
++    }
++
++    /* 3) OLED */
++    if ((now - tOLED) >= PERIOD_OLED_MS) {
++        OLED_Panel_ShowSensors(&g_RightLuna, &g_LeftLuna,
++                               &g_RightColor, &g_LeftColor);
++        tOLED = now;
++    }
++
++    /* 4) UART panel */
++    if ((now - tUART) >= PERIOD_UART_MS) {
++        DebugUART_SensorsDual(&g_RightLuna, &g_LeftLuna,
++                              &g_RightColor, &g_LeftColor);
++        tUART = now;
++    }
++
++    /* 5) Miejsce na AI Sumo (przyszłość) */
++    /* AI_Sumo_Update(...); */
++}
++
++/* USER CODE END 4 */
