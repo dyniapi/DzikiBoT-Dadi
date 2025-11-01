@@ -84,6 +84,9 @@ void DebugUART_SensorsDual(const TF_LunaData_t *RightLuna,
 
     DebugUART_Print( "-------------------------------+-------------------------------------");
 
+
+
+
     /* RGB/C (skalowane /64, tak jak wcześniej) */
     {
         unsigned rR = RightColor->red/64U, gR = RightColor->green/64U, bR = RightColor->blue/64U, cR = RightColor->clear/64U;
