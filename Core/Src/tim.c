@@ -1,21 +1,20 @@
-/* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file    tim.c
-  * @brief   This file provides code for the configuration
-  *          of the TIM instances.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2025 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ * @file    tim.c
+ * @brief   Moduł projektu DzikiBoT.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ *
+ * Funkcje w pliku (skrót):
+ *   - MX_TIM1_Init(void)
+ *   - HAL_TIM_Base_MspInit(TIM_HandleTypeDef* tim_baseHandle)
+ *   - HAL_TIM_MspPostInit(TIM_HandleTypeDef* timHandle)
+ *   - HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* tim_baseHandle)
+ */
+
+/* USER CODE BEGIN Header */
+
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "tim.h"

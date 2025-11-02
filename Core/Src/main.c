@@ -1,31 +1,23 @@
-/* USER CODE BEGIN Header */
 /**
- TEST GIT
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Główny program DzikiBoT (STM32L432KC)
-  *
-  * Funkcje:
-  *  - Inicjalizacja peryferiów (GPIO, USART2, I2C1/I2C3, TIM1)
-  *  - Uruchomienie modułów wysokiego poziomu:
-  *      • Debug UART (panel na żywo w terminalu)
-  *      • I2C skan (diagnostyka adresów)
-  *      • SSD1306 (OLED 128x64 – 7 linii)
-  *      • TF-Luna (Right=I2C1, Left=I2C3) – odporne I2C
-  *      • TCS3472 (Right=I2C1, Left=I2C3)
-  *      • ESC BLDC (TIM1 CH1=PA8 [Right], CH4=PA11 [Left]) + uzbrajanie
-  *      • TankDrive – sterowanie dwoma ESC (rampa, nieblokujące)
-  *
-  * Pętla główna:
-  *  - co 100 ms: odczyt sensorów (TF-Luna + TCS3472)
-  *  - co 200 ms: rysowanie OLED i panel Debug UART
-  *  - co ~tick_ms: Tank_Update() (np. co 20 ms) – rampa i wyjścia PWM
-  *
-  * Uwaga:
-  *  - Kod modułowy: główna logika w plikach .c/.h, a w main.c tylko
-  *    minimalna sekwencja inicjalizacji oraz wywołania okresowe.
-  ******************************************************************************
-  */
+ * @file    main.c
+ * @brief   Punkt wejścia, inicjalizacja peryferiów i modułów, pętla z zadaniami okresowymi.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Trzymaj main.c minimalny — logika w modułach. Dbaj o rytm zadań okresowych.
+ *
+ * Funkcje w pliku (skrót):
+ *   - __io_putchar(int ch)
+ *   - main(void)
+ *   - SystemClock_Config(void)
+ *   - App_Init(void)
+ *   - App_Tick(void)
+ *   - Error_Handler(void)
+ *   - assert_failed(uint8_t *file, uint32_t line)
+ */
+
+/* USER CODE BEGIN Header */
+
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -113,10 +105,7 @@ int __io_putchar(int ch)
 /* USER CODE BEGIN 0 */
 /* USER CODE END 0 */
 
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
+
 int main(void)
 {
 
@@ -163,10 +152,7 @@ int main(void)
   /* USER CODE END 3 */
 }
 
-/**
-  * @brief System Clock Configuration
-  * @retval None
-  */
+
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -233,6 +219,7 @@ static void App_Init(void)
     DebugUART_Init(&huart2);
     DebugUART_Printf("\r\n=== DzikiBoT – start (clean) ===");
     DebugUART_Printf("UART ready @115200 8N1");
+    // Przeskanuj obie magistrale I²C — szybka diagnostyka adresów
     I2C_Scan_All();            /* korzysta z hi2c1 i hi2c3 */
 
     /* 2) Sensory + OLED */
@@ -247,6 +234,7 @@ static void App_Init(void)
 
     /* 3) ESC + TankDrive */
     ESC_Init(&htim1);
+    // 3 s neutralu: pewne „arming” ESC po starcie
     ESC_ArmNeutral(3000);         /* 3 s neutral – tak jak miałeś */
     Tank_Init(&htim1);
     DriveTest_Start();
@@ -254,7 +242,9 @@ static void App_Init(void)
     DebugUART_Printf("ESC + TankDrive ready.");
 
     /* 4) Pierwsze odczyty – zasianie struktur */
+    // Pierwszy odczyt — zasiej strukturę prawą TF-Luna
     g_RightLuna = TF_Luna_Right_Read();
+    // Pierwszy odczyt — zasiej strukturę lewą TF-Luna
     g_LeftLuna  = TF_Luna_Left_Read();
     g_RightColor= TCS3472_Right_Read();
     g_LeftColor = TCS3472_Left_Read();
@@ -268,8 +258,10 @@ static void App_Tick(void)
     const uint32_t now = HAL_GetTick();
 
     /* 1) Tank – rampa/wygładzenie/kompensacja + test (co tick_ms z config) */
+    // Rytm napędu: co tick_ms
     if ((now - tTank) >= CFG_Motors()->tick_ms) {
         Tank_Update();
+        // Krok testu jazdy (sekcja FWD/NEU/REV) — opcjonalne
         DriveTest_Tick();     /* test krokowy w tle */
         tTank = now;
     }
@@ -308,10 +300,7 @@ static void App_Tick(void)
 }
 /* USER CODE END 4 */
 
-/**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
+
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
@@ -322,13 +311,7 @@ void Error_Handler(void)
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
+
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */

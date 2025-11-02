@@ -1,11 +1,10 @@
 /**
  * @file    oled_panel.h
- * @brief   Warstwa prezentacji: panel 7 linii na SSD1306 dla DzikiBoT
- * @date    2025-10-28
+ * @brief   Wyświetlacz SSD1306 i panel diagnostyczny — prezentacja danych.
+ * @date    2025-11-02
  *
- * Użycie:
- *   #include "oled_panel.h"
- *   OLED_Panel_ShowSensors(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor);
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
  */
 
 #ifndef OLED_PANEL_H

@@ -1,21 +1,17 @@
-/* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file         stm32l4xx_hal_msp.c
-  * @brief        This file provides code for the MSP Initialization
-  *               and de-Initialization codes.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2025 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ * @file    stm32l4xx_hal_msp.c
+ * @brief   Moduł projektu DzikiBoT.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ *
+ * Funkcje w pliku (skrót):
+ *   - HAL_MspInit(void)
+ */
+
+/* USER CODE BEGIN Header */
+
 /* USER CODE END Header */
 
 /* Includes ------------------------------------------------------------------*/

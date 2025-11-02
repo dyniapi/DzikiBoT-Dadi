@@ -1,12 +1,16 @@
 /**
  * @file    drive_test.c
- * @brief   Nieblokujący test: FWD 2s → NEU 0.6s → REV 1s → NEU 0.3s
- * @date    2025-10-28
+ * @brief   Sekwencje testowe napędu (FWD/NEU/REV) do szybkiej diagnostyki.
+ * @date    2025-11-02
  *
- * Kluczowe:
- *  - Ustawiamy cele *bezpośrednio* Tank_SetTarget(l,r), żeby ujemne wartości
- *    na pewno dotarły do tank_drive.
- *  - Neutral (0,0) jest osobnym krokiem, więc ESC dostaje „twardy neutral”.
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ *
+ * Funkcje w pliku (skrót):
+ *   - apply_target(int8_t l, int8_t r)
+ *   - DriveTest_Start(void)
+ *   - DriveTest_Tick(void)
+ *   - DriveTest_IsRunning(void)
  */
 
 #include "drive_test.h"

@@ -1,26 +1,30 @@
 /**
- ******************************************************************************
  * @file    tank_drive.c
- * @brief   „Tank drive”: rampa, EMA, kompensacja L/R, mapowanie okna ESC,
- *          neutral-dwell przy zmianie kierunku (crawler ESC), wyjście do ESC.
- * @date    2025-10-28
+ * @brief   Napęd gąsienicowy 2×ESC: rampa w czasie, neutral przy REV, wyjście do warstwy ESC.
+ * @date    2025-11-02
  *
- * Architektura:
- *  - Całe strojenie w config.[ch] (blok [MOTORS]):
- *      * tick_ms              – okres wywołań Tank_Update()
- *      * ramp_step_pct        – krok rampy (w % na tick)
- *      * smooth_alpha         – wygładzanie EMA (0.0 wyłącza)
- *      * left_scale/right_scale – kompensacja asymetrii kół
- *      * esc_start_pct/esc_max_pct – okno pracy ESC (np. 30..60 %)
- *      * neutral_dwell_ms     – czas twardego neutralu przy zmianie kierunku
- *      * reverse_threshold_pct – próg uznania „istotnej” zmiany znaku
+ * Uwaga:
+ *   Wywołuj TankDrive_Update() rytmicznie (CFG_Motors()->tick_ms). Rampa wyprzedza throttle_map.
  *
- *  - API wysokiego poziomu:
- *      Tank_Forward/Backward/TurnLeft/TurnRight/RotateLeft/RotateRight/Stop
- *    oraz Tank_SetTarget(L,R) (−100..+100).
- *
- *  - Wyjście do ESC zawsze przez motor_bldc (liniowo 1..2 ms).
- ******************************************************************************
+ * Funkcje w pliku (skrót):
+ *   - clamp_i8(int v, int lo, int hi)
+ *   - clampf(float v, float lo, float hi)
+ *   - ramp_once(int8_t *cur, int8_t tgt, uint8_t step)
+ *   - ema_step(float prev, float in, float alpha)
+ *   - map_logic_to_esc_window(int8_t x)
+ *   - apply_neutral_gate_one(int8_t cur, int8_t tgt,
+                                     uint8_t *gate_active, uint32_t *gate_until)
+ *   - Tank_Init(TIM_HandleTypeDef *htim1)
+ *   - Tank_Update(void)
+ *   - Tank_Stop(void)
+ *   - Tank_Forward(int8_t pct)
+ *   - Tank_Backward(int8_t pct)
+ *   - arc_pair(int8_t base, int8_t *inner, int8_t *outer)
+ *   - Tank_TurnLeft(int8_t pct)
+ *   - Tank_TurnRight(int8_t pct)
+ *   - Tank_RotateLeft(int8_t pct)
+ *   - Tank_RotateRight(int8_t pct)
+ *   - Tank_SetTarget(int8_t left_pct, int8_t right_pct)
  */
 
 #include "tank_drive.h"

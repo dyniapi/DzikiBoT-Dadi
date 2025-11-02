@@ -1,14 +1,22 @@
 /**
- ******************************************************************************
  * @file    motor_bldc.c
- * @brief   ESC (BLDC) – RC PWM 50 Hz, TIM1; API maksymalnie proste i liniowe
- * @date    2025-10-28
+ * @brief   Sterownik 2× ESC (RC PWM 50 Hz) na TIM1: mapowanie % → µs, aliasy wyjść.
+ * @date    2025-11-02
  *
  * Uwaga:
- *  - Zakładamy konfigurację TIM1: 1 tick = 1 µs (PSC=79), ARR=19999 (20 ms)
- *  - Dzięki temu CCR = liczba mikrosekund impulsu.
- *  - HAL_TIM_PWM_Start włącza MOE (Main Output Enable) dla TIM1 (advanced).
- ******************************************************************************
+ *   Upewnij się, że TIM1 ma PSC/ARR dla 50 Hz (1 µs/tick). Kanały: CH1=PA8 (Right), CH4=PA11 (Left).
+ *
+ * Funkcje w pliku (skrót):
+ *   - clamp_i8(int v, int lo, int hi)
+ *   - esc_set_ccr(ESC_Channel_t ch, uint16_t us)
+ *   - ESC_Init(TIM_HandleTypeDef *htim)
+ *   - ESC_ArmNeutral(uint32_t neutral_ms)
+ *   - ESC_WritePulseUs(ESC_Channel_t ch, uint16_t us)
+ *   - ESC_WritePercentRaw(ESC_Channel_t ch, int8_t percent)
+ *   - ESC_SetNeutralAll(void)
+ *   - ESC_GetMinUs(void)
+ *   - ESC_GetNeuUs(void)
+ *   - ESC_GetMaxUs(void)
  */
 
 #include "motor_bldc.h"
@@ -46,10 +54,12 @@ static void esc_set_ccr(ESC_Channel_t ch, uint16_t us)
 
     switch (ch) {
         case ESC_CH1:
-            __HAL_TIM_SET_COMPARE(s_tim1, TIM_CHANNEL_1, us);
+            // Ustaw CCR (µs) dla danego kanału PWM TIM1
+__HAL_TIM_SET_COMPARE(s_tim1, TIM_CHANNEL_1, us);
             break;
         case ESC_CH4:
-            __HAL_TIM_SET_COMPARE(s_tim1, TIM_CHANNEL_4, us);
+            // Ustaw CCR (µs) dla danego kanału PWM TIM1
+__HAL_TIM_SET_COMPARE(s_tim1, TIM_CHANNEL_4, us);
             break;
         default:
             /* nieobsługiwany kanał */
@@ -62,18 +72,23 @@ void ESC_Init(TIM_HandleTypeDef *htim)
     s_tim1 = htim;
 
     /* Start PWM na CH1 (PA8) i CH4 (PA11). */
-    HAL_TIM_PWM_Start(s_tim1, TIM_CHANNEL_1);
-    HAL_TIM_PWM_Start(s_tim1, TIM_CHANNEL_4);
+    // Start PWM na wskazanym kanale (włącza generację sygnału)
+HAL_TIM_PWM_Start(s_tim1, TIM_CHANNEL_1);
+    // Start PWM na wskazanym kanale (włącza generację sygnału)
+HAL_TIM_PWM_Start(s_tim1, TIM_CHANNEL_4);
 
     /* Bezpieczny stan: neutral na obu kanałach */
-    ESC_SetNeutralAll();
+    // Wyślij 1500 µs na oba kanały — neutral (bezpieczny stan)
+ESC_SetNeutralAll();
 }
 
 void ESC_ArmNeutral(uint32_t neutral_ms)
 {
     /* Jednorazowe ARM na starcie – celowo blokujące */
-    ESC_SetNeutralAll();
-    HAL_Delay(neutral_ms);
+    // Wyślij 1500 µs na oba kanały — neutral (bezpieczny stan)
+ESC_SetNeutralAll();
+    // Odczekaj (ms) — ARM sekwencja dla ESC
+HAL_Delay(neutral_ms);
 }
 
 void ESC_WritePulseUs(ESC_Channel_t ch, uint16_t us)

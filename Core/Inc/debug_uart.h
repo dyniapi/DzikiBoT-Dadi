@@ -1,3 +1,12 @@
+/**
+ * @file    debug_uart.h
+ * @brief   Panel UART 115200 8N1 (ANSI) do debugowania w miejscu.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ */
+
 #ifndef DEBUG_UART_H_
 #define DEBUG_UART_H_
 

@@ -1,16 +1,28 @@
 /**
  * @file    tf_luna_i2c.c
- * @brief   TF-Luna (I2C) – dwa czujniki: Right=I2C1, Left=I2C3
+ * @brief   Obsługa TF-Luna (I²C): odczyt ramek, filtry i diagnostyka.
+ * @date    2025-11-02
  *
- * Ramka 9 bajtów:
- *   [0]=0x59 [1]=0x59 [2]=DistL [3]=DistH [4]=StrL [5]=StrH [6]=TempL [7]=TempH [8]=Sum
- * Suma: (b0..b7) mod 256 == b8
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
  *
- * Wersja na bazie Twojego działającego pliku (zachowany sposób odczytu),
- * ale zintegrowana z config.[ch]:
- *  - okna filtrów (MED/MA), skala temperatury, offsety dystansu P/L → CFG_Luna()
- *  - brak twardego „odrzucania” ramek progami (żeby UI zawsze miało dane)
- *  - poprawione nawiasy przy if (bez „misleading-indentation”)
+ * Funkcje w pliku (skrót):
+ *   - TF_Luna_Right_Init(I2C_HandleTypeDef *hi2c1)
+ *   - TF_Luna_Left_Init(I2C_HandleTypeDef *hi2c3)
+ *   - TF_Luna_Right_ResetFilters(void)
+ *   - TF_Luna_Left_ResetFilters(void)
+ *   - absf_fast(float x)
+ *   - tfluna_checksum_ok(const uint8_t *buf, uint8_t len)
+ *   - tfluna_decode_tempC(int16_t raw, float last_good)
+ *   - median_u16(const uint16_t *arr, uint8_t n)
+ *   - mean_u16(const uint16_t *arr, uint8_t n)
+ *   - filt_update_cfg(tfluna_filt_t *f, uint16_t dist, uint16_t str,
+                            uint16_t *out_med, uint16_t *out_ma)
+ *   - tfluna_read_regs(I2C_HandleTypeDef *hi2c, TF_LunaData_t *out, tfluna_filt_t *fs)
+ *   - tfluna_read_burst(I2C_HandleTypeDef *hi2c, TF_LunaData_t *out, tfluna_filt_t *fs)
+ *   - TF_Luna_Read_Generic(I2C_HandleTypeDef *hi2c, tfluna_filt_t *fs)
+ *   - TF_Luna_Right_Read(void)
+ *   - TF_Luna_Left_Read(void)
  */
 
 #include "tf_luna_i2c.h"

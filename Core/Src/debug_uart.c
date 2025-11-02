@@ -1,3 +1,22 @@
+/**
+ * @file    debug_uart.c
+ * @brief   Panel UART 115200 8N1 (ANSI) do debugowania w miejscu.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ *
+ * Funkcje w pliku (skrót):
+ *   - DebugUART_Init(UART_HandleTypeDef *huart)
+ *   - DebugUART_Print(const char *s)
+ *   - DebugUART_Printf(const char *fmt, ...)
+ *   - term_clear(void)
+ *   - DebugUART_SensorsDual(const TF_LunaData_t *RightLuna,
+                           const TF_LunaData_t *LeftLuna,
+                           const TCS3472_Data_t *RightColor,
+                           const TCS3472_Data_t *LeftColor)
+ */
+
 #include "debug_uart.h"
 #include <stdarg.h>
 #include <string.h>

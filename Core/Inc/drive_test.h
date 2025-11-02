@@ -1,12 +1,10 @@
 /**
  * @file    drive_test.h
- * @brief   Nieblokujący test napędu: FWD 2s → NEU 0.6s → REV 1s → NEU 0.3s
- * @date    2025-10-28
+ * @brief   Sekwencje testowe napędu (FWD/NEU/REV) do szybkiej diagnostyki.
+ * @date    2025-11-02
  *
- * Użycie:
- *   1) #include "drive_test.h" w main.c
- *   2) Po ESC_Init/ESC_ArmNeutral/Tank_Init wywołaj DriveTest_Start();
- *   3) W pętli (razem z Tank_Update) wywołuj DriveTest_Tick();
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
  */
 
 #ifndef DRIVE_TEST_H

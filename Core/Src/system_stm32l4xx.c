@@ -1,80 +1,17 @@
 /**
-  ******************************************************************************
-  * @file    system_stm32l4xx.c
-  * @author  MCD Application Team
-  * @brief   CMSIS Cortex-M4 Device Peripheral Access Layer System Source File
-  *
-  *   This file provides two functions and one global variable to be called from
-  *   user application:
-  *      - SystemInit(): This function is called at startup just after reset and
-  *                      before branch to main program. This call is made inside
-  *                      the "startup_stm32l4xx.s" file.
-  *
-  *      - SystemCoreClock variable: Contains the core clock (HCLK), it can be used
-  *                                  by the user application to setup the SysTick
-  *                                  timer or configure other parameters.
-  *
-  *      - SystemCoreClockUpdate(): Updates the variable SystemCoreClock and must
-  *                                 be called whenever the core clock is changed
-  *                                 during program execution.
-  *
-  *   After each device reset the MSI (4 MHz) is used as system clock source.
-  *   Then SystemInit() function is called, in "startup_stm32l4xx.s" file, to
-  *   configure the system clock before to branch to main program.
-  *
-  *   This file configures the system clock as follows:
-  *=============================================================================
-  *-----------------------------------------------------------------------------
-  *        System Clock source                    | MSI
-  *-----------------------------------------------------------------------------
-  *        SYSCLK(Hz)                             | 4000000
-  *-----------------------------------------------------------------------------
-  *        HCLK(Hz)                               | 4000000
-  *-----------------------------------------------------------------------------
-  *        AHB Prescaler                          | 1
-  *-----------------------------------------------------------------------------
-  *        APB1 Prescaler                         | 1
-  *-----------------------------------------------------------------------------
-  *        APB2 Prescaler                         | 1
-  *-----------------------------------------------------------------------------
-  *        PLL_M                                  | 1
-  *-----------------------------------------------------------------------------
-  *        PLL_N                                  | 8
-  *-----------------------------------------------------------------------------
-  *        PLL_P                                  | 7
-  *-----------------------------------------------------------------------------
-  *        PLL_Q                                  | 2
-  *-----------------------------------------------------------------------------
-  *        PLL_R                                  | 2
-  *-----------------------------------------------------------------------------
-  *        PLLSAI1_P                              | NA
-  *-----------------------------------------------------------------------------
-  *        PLLSAI1_Q                              | NA
-  *-----------------------------------------------------------------------------
-  *        PLLSAI1_R                              | NA
-  *-----------------------------------------------------------------------------
-  *        PLLSAI2_P                              | NA
-  *-----------------------------------------------------------------------------
-  *        PLLSAI2_Q                              | NA
-  *-----------------------------------------------------------------------------
-  *        PLLSAI2_R                              | NA
-  *-----------------------------------------------------------------------------
-  *        Require 48MHz for USB OTG FS,          | Disabled
-  *        SDIO and RNG clock                     |
-  *-----------------------------------------------------------------------------
-  *=============================================================================
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2017 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ * @file    system_stm32l4xx.c
+ * @brief   Moduł projektu DzikiBoT.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ *
+ * Funkcje w pliku (skrót):
+ *   - SystemInit(void)
+ *   - SystemCoreClockUpdate(void)
+ */
+
+
 
 /** @addtogroup CMSIS
   * @{
@@ -189,10 +126,7 @@
   * @{
   */
 
-/**
-  * @brief  Setup the microcontroller system.
-  * @retval None
-  */
+
 
 void SystemInit(void)
 {
@@ -207,47 +141,7 @@ void SystemInit(void)
 #endif
 }
 
-/**
-  * @brief  Update SystemCoreClock variable according to Clock Register Values.
-  *         The SystemCoreClock variable contains the core clock (HCLK), it can
-  *         be used by the user application to setup the SysTick timer or configure
-  *         other parameters.
-  *
-  * @note   Each time the core clock (HCLK) changes, this function must be called
-  *         to update SystemCoreClock variable value. Otherwise, any configuration
-  *         based on this variable will be incorrect.
-  *
-  * @note   - The system frequency computed by this function is not the real
-  *           frequency in the chip. It is calculated based on the predefined
-  *           constant and the selected clock source:
-  *
-  *           - If SYSCLK source is MSI, SystemCoreClock will contain the MSI_VALUE(*)
-  *
-  *           - If SYSCLK source is HSI, SystemCoreClock will contain the HSI_VALUE(**)
-  *
-  *           - If SYSCLK source is HSE, SystemCoreClock will contain the HSE_VALUE(***)
-  *
-  *           - If SYSCLK source is PLL, SystemCoreClock will contain the HSE_VALUE(***)
-  *             or HSI_VALUE(*) or MSI_VALUE(*) multiplied/divided by the PLL factors.
-  *
-  *         (*) MSI_VALUE is a constant defined in stm32l4xx_hal.h file (default value
-  *             4 MHz) but the real value may vary depending on the variations
-  *             in voltage and temperature.
-  *
-  *         (**) HSI_VALUE is a constant defined in stm32l4xx_hal.h file (default value
-  *              16 MHz) but the real value may vary depending on the variations
-  *              in voltage and temperature.
-  *
-  *         (***) HSE_VALUE is a constant defined in stm32l4xx_hal.h file (default value
-  *              8 MHz), user has to ensure that HSE_VALUE is same as the real
-  *              frequency of the crystal used. Otherwise, this function may
-  *              have wrong result.
-  *
-  *         - The result of this function could be not correct when using fractional
-  *           value for HSE crystal.
-  *
-  * @retval None
-  */
+
 void SystemCoreClockUpdate(void)
 {
   uint32_t tmp, msirange, pllvco, pllsource, pllm, pllr;

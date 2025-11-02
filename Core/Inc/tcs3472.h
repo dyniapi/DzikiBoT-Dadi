@@ -1,3 +1,12 @@
+/**
+ * @file    tcs3472.h
+ * @brief   Obsługa TCS3472 (I²C): odczyt RAW C/R/G/B, skalowania i progi.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ */
+
 /*
  * tcs3472.h
  *
@@ -5,13 +14,7 @@
  *      Author: dyniapi
  */
 
-/**
- ******************************************************************************
- * @file    tcs3472.h
- * @brief   TCS3472 (I2C) – dwa czujniki: Right(I2C1), Left(I2C3)
- * @note    Wersja „pełna” – z konfiguracją rejestrów (ATIME, GAIN, ENABLE).
- ******************************************************************************
- */
+
 #ifndef TCS3472_H_
 #define TCS3472_H_
 

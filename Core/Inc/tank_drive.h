@@ -1,18 +1,10 @@
 /**
  * @file    tank_drive.h
- * @brief   „Tank drive” – rampa, EMA, kompensacja L/R, mapowanie do okna ESC
- * @date    2025-10-28
+ * @brief   Napęd gąsienicowy 2×ESC: rampa w czasie, neutral przy REV, wyjście do warstwy ESC.
+ * @date    2025-11-02
  *
- * Logika:
- *  - Rampa (miękkie zmiany) – krok %/tick z config
- *  - Wygładzanie EMA (opcjonalne) – współczynnik alpha w config
- *  - Kompensacja L/R (skalowanie) – z config
- *  - Mapowanie komendy logicznej [-100..100] do „okna ESC” [start..max] %,
- *    gdzie start=30%, max=60% (domyślnie) pobierane z config:
- *      |cmd|=0 → neutral (0%)
- *      |cmd|>0 → [start..max] i znak → kierunek
- *
- * Wystawianie na ESC robi motor_bldc (liniowo w 1..2 ms).
+ * Uwaga:
+ *   Wywołuj TankDrive_Update() rytmicznie (CFG_Motors()->tick_ms). Rampa wyprzedza throttle_map.
  */
 
 #ifndef TANK_DRIVE_H

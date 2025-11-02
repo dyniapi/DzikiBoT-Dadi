@@ -1,9 +1,26 @@
+/**
+ * @file    throttle_map.c
+ * @brief   Korekta przepustnicy: trim L/R i lekka krzywa; wynik w -100..100.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Deadband i okno RC PWM są w warstwie ESC; tu tylko wyrównanie i krzywa (domyślnie blisko liniowej).
+ *
+ * Funkcje w pliku (skrót):
+ *   - clampf(float v, float lo, float hi)
+ *   - shoulder_soften(float x, float shoulder_x, float gain)
+ *   - apply_curve(float x, const ThrCurve_t *c)
+ *   - Throttle_Init(const Throttle_Params_t *p)
+ *   - Throttle_Apply(int8_t in_percent, ThrSide_t side)
+ */
+
 #include "throttle_map.h"
 #include <string.h>
 
 /* Stan modułu */
 static Throttle_Params_t G = {0};
 
+// Domyślne parametry — start bezpieczny i blisko liniowy
 const Throttle_Params_t THROTTLE_DEFAULTS = {
   /* left  */ { 1.10f, 0.0f },
   /* right */ { 1.00f, 0.0f },
@@ -97,17 +114,21 @@ void Throttle_Init(const Throttle_Params_t *p)
 int8_t Throttle_Apply(int8_t in_percent, ThrSide_t side)
 {
   /* 1) wejście -100..100 → float -1..1 */
-  float x = (float)in_percent / 100.0f;
+  // Przeskaluj -100..100 → -1.0..1.0
+float x = (float)in_percent / 100.0f;
 
   /* 2) TRIM per-koło */
-  const ThrTrim_t* T = (side == THR_LEFT) ? &G.left : &G.right;
-  x = x * T->scale + (T->offset / 100.0f);
+  // Wybierz zestaw trymów (lewy/prawy)
+const ThrTrim_t* T = (side == THR_LEFT) ? &G.left : &G.right;
+  // Zastosuj skalę i offset dla danej strony
+x = x * T->scale + (T->offset / 100.0f);
 
   /* 3) Krzywa */
   x = apply_curve(x, &G.curve);
 
   /* 4) clamp i powrót do -100..100 */
-  x = clampf(x, -1.0f, 1.0f);
+  // Ogranicz do zakresu [-1..1] przed konwersją na %
+x = clampf(x, -1.0f, 1.0f);
   int v = (int)(x * 100.0f);
   if (v < -100) v = -100;
   if (v >  100) v =  100;

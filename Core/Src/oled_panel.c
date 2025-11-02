@@ -1,3 +1,18 @@
+/**
+ * @file    oled_panel.c
+ * @brief   Wyświetlacz SSD1306 i panel diagnostyczny — prezentacja danych.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ *
+ * Funkcje w pliku (skrót):
+ *   - OLED_Panel_ShowSensors(const TF_LunaData_t *R,
+                            const TF_LunaData_t *L,
+                            const TCS3472_Data_t *CR,
+                            const TCS3472_Data_t *CL)
+ */
+
 #include "oled_panel.h"
 #include "ssd1306.h"
 #include <stdio.h>   // snprintf

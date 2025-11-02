@@ -1,18 +1,10 @@
 /**
- * @file   throttle_map.h
- * @brief  Kompensacja różnic L/R + nieliniowa krzywa przepustnicy
- * @date   2025-10-28
+ * @file    throttle_map.h
+ * @brief   Korekta przepustnicy: trim L/R i lekka krzywa; wynik w -100..100.
+ * @date    2025-11-02
  *
- * Użycie:
- *   Throttle_Params_t p = THROTTLE_DEFAULTS;
- *   // dostrój:
- *   p.left.scale  = 1.07f;   // 7% mocniej lewy
- *   p.right.scale = 1.00f;
- *   p.curve.gamma = 1.6f;    // „zmiękcza” dół, wyrównuje skok koło 50%
- *   Throttle_Init(&p);
- *
- *   int8_t l_out = Throttle_Apply(-30, THR_LEFT);  // -100..100 wejście
- *   int8_t r_out = Throttle_Apply(+30, THR_RIGHT); // -100..100 wyjście (po kompensacji)
+ * Uwaga:
+ *   Deadband i okno RC PWM są w warstwie ESC; tu tylko wyrównanie i krzywa (domyślnie blisko liniowej).
  */
 
 #ifndef THROTTLE_MAP_H

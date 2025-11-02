@@ -1,3 +1,12 @@
+/**
+ * @file    tf_luna_i2c.h
+ * @brief   Obsługa TF-Luna (I²C): odczyt ramek, filtry i diagnostyka.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ */
+
 /*
  * tf_luna_i2c.h
  *
@@ -5,27 +14,7 @@
  *      Author: DzikiBoT
  */
 
-/**
- ******************************************************************************
- * @file    tf_luna_i2c.h
- * @brief   TF-Luna over I2C – odporna obsługa (burst + fallback rejestrami)
- *          + filtry (MED5 dla distance, MA5 dla strength)
- * @version 3.0
- * @date    26.10.2025
- *
- *  Adres I2C: 0x10 (7-bit) → HAL (8-bit) = 0x20.
- *
- *  Zwracane jednostki:
- *    - distance          [cm]      (uint16_t, surowe)
- *    - distance_filt     [cm]      (uint16_t, MED5)
- *    - strength          [raw]     (uint16_t, surowe)
- *    - strength_filt     [raw]     (uint16_t, MA5)
- *    - temperature       [°C]      (float, już w stopniach C)
- *    - frameReady        1/0       (czy świeża ramka poprawna)
- *
- *  API rozdzielone na Right (I2C1) i Left (I2C3).
- ******************************************************************************
- */
+
 
 #ifndef TF_LUNA_I2C_H_
 #define TF_LUNA_I2C_H_

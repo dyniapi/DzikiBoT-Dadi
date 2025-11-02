@@ -1,8 +1,27 @@
 /**
- ******************************************************************************
  * @file    ssd1306.c
- * @brief   Implementacja sterownika SSD1306 (128x64, I2C) + font 6x8
- ******************************************************************************
+ * @brief   Wyświetlacz SSD1306 i panel diagnostyczny — prezentacja danych.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ *
+ * Funkcje w pliku (skrót):
+ *   - ssd1306_sendCommand(uint8_t cmd)
+ *   - ssd1306_sendCommands(const uint8_t *cmds, uint16_t n)
+ *   - ssd1306_sendData(const uint8_t *data, uint16_t n)
+ *   - SSD1306_Init(void)
+ *   - SSD1306_Clear(void)
+ *   - SSD1306_DrawPixel(uint8_t x, uint8_t y, uint8_t on)
+ *   - SSD1306_DrawHLine(uint8_t y, uint8_t x0, uint8_t x1)
+ *   - SSD1306_SetContrast(uint8_t value)
+ *   - SSD1306_UpdateScreen(void)
+ *   - draw_char_6x8(uint8_t x, uint8_t page, char c)
+ *   - SSD1306_DrawChar(uint8_t x, uint8_t page, char c)
+ *   - SSD1306_DrawText(uint8_t page, const char *text)
+ *   - SSD1306_DrawTextAt(uint8_t page, uint8_t x, const char *text)
+ *   - OLED_ShowSensors(const TF_LunaData_t *R, const TF_LunaData_t *L,
+                      const TCS3472_Data_t *CR, const TCS3472_Data_t *CL)
  */
 
 #include "ssd1306.h"

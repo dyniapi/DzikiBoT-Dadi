@@ -1,3 +1,12 @@
+/**
+ * @file    config.h
+ * @brief   Definicje parametrów konfiguracji (napęd, TF-Luna, TCS3472).
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zmiany w tych parametrach wpływają na zachowanie całego systemu — stroić ostrożnie.
+ */
+
 #ifndef CONFIG_H
 #define CONFIG_H
 

@@ -1,21 +1,15 @@
 /**
  * @file    config.c
- * @brief   Centralna konfiguracja projektu DzikiBoT.
+ * @brief   Moduł projektu DzikiBoT.
+ * @date    2025-11-02
  *
- * Ten plik trzyma „wartości startowe” dla modułów:
- *  - SILNIKI / TANK-DRIVE (ESC na TIM1)
- *  - czujnik odległości TF-Luna (I2C)
- *  - czujnik koloru / jasności TCS3472 (I2C)
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
  *
- * IDEA:
- *  - Nowa osoba w projekcie powinna móc ZMIENIĆ TYLKO TE liczby poniżej
- *    i nie dotykać reszty kodu.
- *  - Każdy parametr ma opis: „co robi” + „kiedy go ruszać”.
- *
- * WAŻNE:
- *  - Wszystkie struktury są `static const` → to są domyślne ustawienia wbudowane
- *    do firmware. Jeśli kiedyś zrobisz „konfigurację z EEPROM / z UART”, to
- *    właśnie z tych wartości możesz startować.
+ * Funkcje w pliku (skrót):
+ *   - CFG_Motors(void)
+ *   - CFG_Luna(void)
+ *   - CFG_TCS(void)
  */
 
 #include "config.h"

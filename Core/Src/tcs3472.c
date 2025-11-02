@@ -1,8 +1,20 @@
 /**
  * @file    tcs3472.c
- * @brief   TCS3472 – Right=I2C1, Left=I2C3; konfiguracja z config.[ch]
- * @note    Sterownik zwraca SUROWE C/R/G/B. Skalowanie do prezentacji (/64)
- *          zostaje w UI (DebugUART/OLED), żeby uniknąć podwójnego dzielenia.
+ * @brief   Obsługa TCS3472 (I²C): odczyt RAW C/R/G/B, skalowania i progi.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ *
+ * Funkcje w pliku (skrót):
+ *   - tcs_atime_from_ms(float ms)
+ *   - tcs_gain_to_reg(TCS_Gain_t g)
+ *   - TCS3472_Config(I2C_HandleTypeDef *hi2c)
+ *   - TCS3472_Right_Init(I2C_HandleTypeDef *hi2c1)
+ *   - TCS3472_Left_Init(I2C_HandleTypeDef *hi2c3)
+ *   - TCS3472_ReadGeneric(I2C_HandleTypeDef *hi2c)
+ *   - TCS3472_Right_Read(void)
+ *   - TCS3472_Left_Read(void)
  */
 
 #include "tcs3472.h"

@@ -1,21 +1,19 @@
-/* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file    usart.c
-  * @brief   This file provides code for the configuration
-  *          of the USART instances.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2025 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ * @file    usart.c
+ * @brief   Moduł projektu DzikiBoT.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ *
+ * Funkcje w pliku (skrót):
+ *   - MX_USART2_UART_Init(void)
+ *   - HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
+ *   - HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
+ */
+
+/* USER CODE BEGIN Header */
+
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "usart.h"
