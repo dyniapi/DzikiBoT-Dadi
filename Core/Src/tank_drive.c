@@ -37,7 +37,49 @@
  *   - Tank_Update(void)
  *   - Tank_Stop/Forward/Backward/TurnLeft/TurnRight/RotateLeft/RotateRight
  *   - Tank_SetTarget(int8_t left_pct, int8_t right_pct)
- */
+ *
+ *
+ * ============================================================================
+ *  FAQ STROJENIA (tank_drive) — szybkie odpowiedzi „co zmienić i dlaczego”
+ *  ----------------------------------------------------------------------------
+ *  1) Po co „neutral-gate” (bramka neutralu)?
+ *     • Chroni ESC i mechanikę przy nagłej zmianie kierunku (np. +80% → −80%).
+ *     • Wymusza krótki neutral (C->neutral_dwell_ms), dając ESC czas na wejście w reverse.
+ *
+ *  2) Co robi reverse_threshold_pct?
+ *     • To martwa strefa wokół 0% (np. ±3%). Zmiana znaku TYLKO gdy przekroczysz tę „bramkę”.
+ *     • Większa wartość → trudniej „przeskoczyć” przez 0% (stabilniej, ale wolniej reaguje).
+ *
+ *  3) Rampa vs. smooth_alpha — jaka kolejność i efekt?
+ *     • Najpierw rampa (ogranicza skok na tick), potem EMA (wygładza to, co już zrampowano).
+ *     • ramp_step_pct kontroluje „twardość” fizycznej zmiany, smooth_alpha „miękkość” odbioru.
+ *
+ *  4) Co się dzieje, gdy gate_*_active = 1?
+ *     • Kanał trzymany na 0% (neutral) do czasu gate_*_until (now + neutral_dwell_ms).
+ *     • Rampa nie jest wykonywana (twardo 0%), by uniknąć „ciągnięcia” w trakcie reverse.
+ *
+ *  5) Po co okno ESC (esc_start_pct..esc_max_pct)?
+ *     • Większość ESC ma martwą strefę i bardzo „czułą” górę. Okno daje przewidywalny dół
+ *       (łatwy moment od małych wartości) i limituje szczyt (kontrola trakcji w minisumo).
+ *
+ *  6) Czemu EMA po rampie?
+ *     • Gdyby EMA była przed rampą, duże skoki nadal przechodziłyby do rampy jako „twarde kroki”.
+ *       Obecny porządek: najpierw ogranicz krok, potem wygładź to, co zostanie.
+ *
+ *  7) Kiedy zwiększyć left_scale/right_scale powyżej 1.0?
+ *     • Gdy na prostej „ściąga” — np. left_scale=1.02 delikatnie podbije lewy tor. Zawsze w krokach 0.01.
+ *
+ *  8) Czy HAL_GetTick overflow jest bezpieczny?
+ *     • Tak. Różnicowanie (now - tX) na typach bez znaku jest bezpieczne (wrap-around poprawnie zadziała).
+ *
+ *  9) Co jeśli tick (CFG_Motors()->tick_ms) ma jitter?
+ *     • Ten kod porównuje różnicę czasu, nie wymaga idealnego interwału. Jitter w rozsądnych granicach jest OK.
+ *
+ *  10) Koło kręci się „odwrotnie” (pomyłka przewodów/mappingu)?
+ *     • Zamień przewody silnika (dla BLDC) LUB odwróć znaczenie kanałów na poziomie ESC (nie tu).
+ *       Warstwa tank_drive zakłada: dodatnie = „do przodu”.
+ * ============================================================================ */
+
 
 #include "tank_drive.h"     // deklaracje API tank drive (spójne z projektem)
 #include "motor_bldc.h"     // wyjście do warstwy ESC (ESC_WritePercentRaw, ESC_SetNeutralAll)

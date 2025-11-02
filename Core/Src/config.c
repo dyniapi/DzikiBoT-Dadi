@@ -6,22 +6,71 @@
  *    • Zestaw „gałek” (parametrów) dla: napędu (tank drive), TF-Luna, TCS3472, scheduler.
  *    • Każde pole opisane: do czego służy, typowy ZAKRES i JAKI jest efekt zmiany.
  *
- *  PO CO:
- *    • Żeby stroić zachowanie bez dotykania logiki modułów (TankDrive, sensory, OLED/UART).
- *    • Zmiany w tym pliku „przechodzą” przez gettery CFG_*() do całego projektu.
+ *  QUICK REF — typowe zakresy strojenia (skrót przydatny „na gorąco”):
+ *  ────────────────────────────────────────────────────────────────────────────
+ *  [Motors / TankDrive]
+ *    tick_ms                : 10..50 ms   (typ. 20)   ↓mniej = szybciej; ↑więcej = lżej dla CPU
+ *    neutral_dwell_ms       : 200..800 ms (typ. 600)  ↑więcej = bezpieczniejszy reverse, wolniej
+ *    ramp_step_pct          : 1..10 %/tick(typ. 4)    ↑więcej = zrywniej; ↓mniej = łagodniej
+ *    reverse_threshold_pct  : 1..5 %      (typ. 3)    ↑więcej = trudniej „przeskoczyć” przez 0%
+ *    smooth_alpha           : 0.10..0.40  (typ. 0.25) ↑więcej→mniej filtruje (żywiej)
+ *    left_scale/right_scale : 0.90..1.10× (typ. 1.00) korekta prostoliniowości
+ *    esc_start_pct          : 20..40 %    (typ. 30)   ↑więcej = mocniejszy „ciąg od dołu”
+ *    esc_max_pct            : 50..80 %    (typ. 60)   ↓mniej = ograniczenie szczytowej mocy
  *
- *  JAK CZYTAĆ I STROIĆ (skrót):
- *    - Zaczynaj od wartości domyślnych (poniżej).
- *    - Zmieniaj jedna rzecz naraz i testuj (OLED/UART pokazują efekt).
- *    - Jeśli coś „pływa” – minimalnie zmień rampę (ramp_step_pct) lub wygładzanie (smooth_alpha).
+ *  [TF-Luna]
+ *    median_win             : 1..7        (typ. 3)    ↑więcej = odporność na piki, wolniej
+ *    ma_win                 : 1..8        (typ. 4)    ↑więcej = gładszy trend, większe opóźnienie
+ *    temp_scale             : 0.5..2.0    (typ. 1.0)  zwykle 1.0
+ *    dist_offset_[LR]_mm    : −200..+200  (typ. 0)    korekta po kalibracji
+ *
+ *  [TCS3472]
+ *    atime_ms               : ~24..154 ms (typ. 100)  ↑więcej = większa czułość, wolniej
+ *    gain                   : 1× / 4× / 16× / 60×     start: 16×; zmniejsz przy nasyceniu
+ *
+ *  [Scheduler]
+ *    sens_ms                : 50..200 ms  (typ. 100)  częstotliwość odczytu TF-Luna/TCS
+ *    oled_ms                : 100..500 ms (typ. 200)  płynność vs. migotanie
+ *    uart_ms                : 100..500 ms (typ. 200)  płynność logów
+ *  ────────────────────────────────────────────────────────────────────────────
+ *
+ *  FAQ STROJENIA (szybkie podpowiedzi):
+ *  1) „Szarpie przy starcie”
+ *     → Zmniejsz ramp_step_pct (np. 2–3), ustaw smooth_alpha nieco niżej (0.20–0.25),
+ *       lekko podnieś esc_start_pct (np. 30→33), by konsekwentnie wychodzić z martwej strefy ESC.
+ *
+ *  2) „Reverse wchodzi zbyt wolno”
+ *     → Zmniejsz neutral_dwell_ms (np. 600→350), oraz delikatnie reverse_threshold_pct (3→2).
+ *       Uwaga: zbyt małe wartości mogą zwiększyć ryzyko „oscylacji” przy 0%.
+ *
+ *  3) „Ściąga na prostej”
+ *     → Koryguj left_scale/right_scale w krokach ±0.01 (1%) aż do jazdy na wprost (np. 1.00→1.02).
+ *
+ *  4) „OLED miga / jest ślamazarny”
+ *     → Dla migotania: zwiększ oled_ms (200→250/300). Dla większej płynności: zmniejsz (200→150).
+ *       Dodatkowo ogranicz liczbę pełnych czyszczeń ekranu w renderze.
+ *
+ *  5) „TCS3472 się nasyca (maksymalne wartości)”
+ *     → Zmniejsz gain (16×→4×→1×) lub skróć atime_ms (100→50). Przy bardzo ciemnym tle: odwrotnie.
+ *
+ *  6) „TF-Luna pływa / skacze”
+ *     → Zwiększ median_win (3→5) albo ma_win (4→6). Pamiętaj: większe okna → wolniejsza odpowiedź.
+ *
+ *  7) „Napęd reaguje zbyt ospale”
+ *     → Zwiększ ramp_step_pct (4→6), podnieś smooth_alpha (0.25→0.35), rozważ krótsze tick_ms (20→15).
+ *       Uwaga: krótszy tick to większy narzut CPU.
+ *
+ *  8) „ESC nie armują się na starcie”
+ *     → W App_Init() zwiększ czas ESC_ArmNeutral (np. 3000→4000 ms). Upewnij się, że ESC_Init
+ *       jest wywołane przed armingiem i kanały TIM1 (CH1/CH4) faktycznie generują PWM ~50 Hz.
+ *
+ *  PO CO:
+ *    • Stroisz zachowanie bez dotykania logiki modułów (TankDrive, sensory, OLED/UART).
+ *    • Zmiany tutaj „przechodzą” przez gettery CFG_*() do całego projektu.
  *
  *  BEZPIECZEŃSTWO:
  *    • Ten plik nie ma HAL_Delay – zmiany parametrów nie blokują czasu wykonania.
  *    • Jedyny „blokujący” fragment jest w App_Init() → ESC_ArmNeutral(3000) (arming ESC na starcie).
- *
- *  UWAGA:
- *    • To są wartości DOMYŚLNE – możesz je dostroić do konkretnej mechaniki/ESCów/sensorów.
- *    • Logika modułów NIE nadpisuje tych wartości w runtime.
  * =============================================================================
  */
 
@@ -54,8 +103,7 @@
  *        Mniej (→0) = mocniejsze wygładzanie (stabilniej, ale „tępo”).
  *
  *    - left_scale, right_scale [krotność] : balans torów; 1.00 = brak korekty.
- *        Zakres: 0.80..1.20 (typowo 1.00 i 1.00).
- *        Podbij lewy/prawy, jeśli robot „ściąga” na prostej.
+ *        Zakres: 0.90..1.10 (typowo 1.00/1.00). Podbij, jeśli robot „ściąga” na prostej.
  *
  *    - esc_start_pct, esc_max_pct [%] : okno „użyteczne” ESC – do tego mapuje się 0..100% napędu.
  *        Zakres: start 20..40 (%), max 50..80 (%). Typowo 30..60 (%).
@@ -92,13 +140,14 @@ static const ConfigMotors_t g_motors = {
  *        Zakres: ±200 mm (typowo 0). Dodatni = odczyt będzie wyglądał na „dalej”.
  * =============================================================================
  */
-static const ConfigLuna_t g_luna = {
-    .median_win             = 3,      // [próbki] mediana (3) usuwa pojedyncze „piki”
-    .ma_win                 = 4,      // [próbki] średnia krocząca (4) wygładza trend
-    .temp_scale             = 1.0f,   // [×] skala temperatury (zostaw 1.0, jeśli nie kalibrujesz)
-    .dist_offset_right_mm   = 0,      // [mm] korekta offsetu (sensor prawy)
-    .dist_offset_left_mm    = 0,      // [mm] korekta offsetu (sensor lewy)
-};
+ static const ConfigLuna_t g_luna = {
+     .median_win             = 3,
+     .ma_win                 = 4,
+     .temp_scale             = 1.0f,
+     .temp_offset_c          = -25.0f,   // ~przybliżenie ambientu względem temp. układu
+     .dist_offset_right_mm   = 0,
+     .dist_offset_left_mm    = 0,
+ };
 
 /* =============================================================================
  *  TCS3472 (I²C) — INTEGRACJA I WZMOCNIENIE  (CFG_TCS)

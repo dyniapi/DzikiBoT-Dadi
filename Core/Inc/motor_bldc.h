@@ -21,7 +21,18 @@
  *    - ESC_WritePercentRaw: „surowy” % w zakresie −100..0..+100 (0 = 1500 µs; ±100 = skraje).
  *      Przycięcie do zakresu odbywa się w implementacji.
  * ============================================================================
- */
+ *  Typowe zakresy strojenia okna RC (µs)
+ *
+ *  ESC_MIN_US :  980..1100 µs   (typ. 1000)   „pełny wstecz”
+ *  ESC_NEU_US : 1500 µs         (stałe)       neutral
+ *  ESC_MAX_US : 1900..2020 µs   (typ. 2000)   „pełny naprzód”
+ *
+ *  Wskazówki:
+ *    • Jeśli ESC kalibrowane ręcznie — ustaw tu wartości końcowe z kalibracji.
+ *    • Gdy napęd „szarpie” przy starcie: zostaw MIN/NEU/MAX, a zwiększ esc_start_pct w CFG_Motors().
+ *    • Upewnij się, że TIM1 daje ~50 Hz (ok. 20 ms okresu) i skala CCR odpowiada 1 µs.
+ * -------------------------------------------------------------------------- */
+
 
 #ifdef __cplusplus
 extern "C" {

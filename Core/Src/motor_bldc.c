@@ -20,7 +20,50 @@
  * PARAMETRY (stałe w tym pliku):
  *   - ESC_MIN_US / ESC_NEU_US / ESC_MAX_US — granice okna RC (typowo 1000/1500/2000 µs).
  *     Jeśli Twoje ESC wymaga innego zakresu, zmieniasz TYLKO te trzy wartości.
- */
+
+ * ============================================================================
+ *  FAQ STROJENIA (motor_bldc / RC PWM) — szybkie odpowiedzi „co zmienić i czemu”
+ *  ----------------------------------------------------------------------------
+ *  1) ESC nie chce się „uzbroić” po starcie:
+ *     • W App_Init zwiększ ESC_ArmNeutral(3000→4000 ms). Upewnij się, że ESC_Init jest przed armingiem
+ *       i TIM1 rzeczywiście generuje ~50 Hz (okres ~20 ms; PSC/ARR ustawione poprawnie).
+ *
+ *  2) Jak skalibrować min/neu/max µs?
+ *     • Najpierw kalibracja ESC wg instrukcji producenta, potem w tym pliku ustaw ESC_MIN_US/ESC_MAX_US
+ *       do wartości końcowych z kalibracji (NEU pozostaje 1500 µs).
+ *
+ *  3) Dlaczego mapowanie % → µs jest liniowe?
+ *     • Prostota i przewidywalność. „Miękkość” i „zrywność” kontrolujesz w tank_drive
+ *       (rampa, EMA, okno ESC). Tam jest właściwe miejsce na shaping.
+ *
+ *  4) Timer nie jest 50 Hz — co wtedy?
+ *     • RC PWM wymaga ~20 ms okresu. Skoryguj PSC/ARR tak, by CCR=µs dawało prawdziwe mikrosekundy.
+ *       Jeśli 1 CCR = 1 µs, to 20000 CCR = 20 ms. Inaczej przeskaluj (lub zastosuj przelicznik w esc_set_ccr).
+ *
+ *  5) Czy potrzebny jest „deadband” wokół 1500 µs?
+ *     • Nie na tym poziomie. Deadband realizuje logika (reverse_threshold_pct + okno ESC).
+ *       Tu zawsze 0% = 1500 µs.
+ *
+ *  6) Co z DShot/AM32?
+ *     • Ten plik to RC PWM. Gdy przejdziesz na DShot, zrobisz osobną warstwę wyjścia (API pozostawić zgodne),
+ *       żeby nie dotykać tank_drive. Ten sterownik jest celowo prosty i izolowany.
+ *
+ *  7) Co jeśli wartości wyjdą poza zakres?
+ *     • esc_set_ccr przycina do [ESC_MIN_US..ESC_MAX_US], więc nie wyślesz „śmieci”.
+ *
+ *  8) Neutral ustawiany jest dwa razy (ESC_Init i ESC_ArmNeutral)?
+ *     • Tak — celowo. Najpierw od razu po starcie PWM, potem dłuższy neutral w sekwencji ARM.
+ *
+ *  9) Koło kręci „w tył”, gdy daję +%?
+ *     • Odwróć kolejność przewodów faz BLDC na ESC lub użyj funkcji reverse w ustawieniach ESC.
+ *       Warstwa logiczna zakłada: +% ma dawać „przód”.
+ * ============================================================================ */
+
+
+
+
+
+
 
 #include "motor_bldc.h"      // typy: ESC_Channel_t, deklaracje API
 #include "stm32l4xx_hal.h"   // __HAL_TIM_SET_COMPARE, HAL_TIM_PWM_Start

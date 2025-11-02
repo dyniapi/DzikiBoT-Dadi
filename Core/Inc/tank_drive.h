@@ -21,7 +21,28 @@
  *    - Kanały: TIM1_CH1 = PA8 → Right, TIM1_CH4 = PA11 → Left (mapowanie w warstwie ESC).
  *    - Skala mocy dla funkcji przyjmujących „%”: 0..100 (znak w SetTarget: −100..+100).
  * ============================================================================
- */
+
+ *
+ *  Typowe zakresy strojenia (quick ref)
+ *
+ *  CFG_Motors()->tick_ms            : 10..50 ms   (typ. 20)     ↓mniej = szybciej reaguje; ↑więcej = lżej dla CPU
+ *  CFG_Motors()->ramp_step_pct      : 1..10 %/tick (typ. 4)      ↑więcej = ostrzejszy start/hamowanie; ↓mniej = bardziej miękko
+ *  CFG_Motors()->smooth_alpha       : 0.10..0.40  (typ. 0.25)    ↑więcej→mniej filtruje (bardziej „żywo”); ↓mniej→bardziej stabilnie
+ *  CFG_Motors()->neutral_dwell_ms   : 200..800 ms (typ. 600)     ↑więcej = bezpieczniej przy reverse, wolniej zmienia kierunek
+ *  CFG_Motors()->reverse_threshold_pct : 1..5 %   (typ. 3)       ↑więcej = trudniej „przeskoczyć” przez 0%; ↓mniej = ryzyko oscylacji
+ *  CFG_Motors()->left_scale         : 0.90..1.10  (typ. 1.00)    korekta prostoliniowości (lewy tor)
+ *  CFG_Motors()->right_scale        : 0.90..1.10  (typ. 1.00)    korekta prostoliniowości (prawy tor)
+ *  CFG_Motors()->esc_start_pct      : 20..40 %    (typ. 30)      ↑więcej = mocniejszy „ciąg od dołu”, łatwiejsze ruszanie
+ *  CFG_Motors()->esc_max_pct        : 50..80 %    (typ. 60)      ↓mniej = ograniczenie szczytowej mocy (kontrola trakcji)
+ *
+ *  Wskazówki:
+ *    • „Zrywny start” minisumo: ramp_step_pct 5–8, smooth_alpha 0.20–0.30, esc_start_pct 30–35.
+ *    • „Płynne manewry precyzyjne”: ramp_step_pct 2–4, smooth_alpha 0.25–0.35, esc_max_pct 55–65.
+ *    • Jeśli ściąga na prostej: zmieniaj left/right_scale o 0.01 (1%) i testuj.
+ * -------------------------------------------------------------------------- */
+
+
+
 
 #ifdef __cplusplus
 extern "C" {
