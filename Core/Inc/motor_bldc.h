@@ -1,44 +1,81 @@
-/**
- * @file    motor_bldc.h
- * @brief   Sterownik 2× ESC (RC PWM 50 Hz) na TIM1: mapowanie % → µs, aliasy wyjść.
- * @date    2025-11-02
+#pragma once
+/*
+ * ============================================================================
+ *  MODULE: motor_bldc — wyjście 2×ESC (RC PWM 50 Hz) na TIM1
+ *  ----------------------------------------------------------------------------
+ *  CO:
+ *    - Prosta warstwa „elektryczna” — mapuje % na mikrosekundy i zapisuje do CCR.
+ *    - Dwa kanały: TIM1_CH1 (PA8) = Right, TIM1_CH4 (PA11) = Left.
  *
- * Uwaga:
- *   Upewnij się, że TIM1 ma PSC/ARR dla 50 Hz (1 µs/tick). Kanały: CH1=PA8 (Right), CH4=PA11 (Left).
+ *  PO CO:
+ *    - Oddzielenie pracy z timerem/CCR od logiki napędu (tank_drive).
+ *    - Jedno miejsce, gdzie w razie potrzeby korygujesz zakres µs (np. 1000/1500/2000).
+ *
+ *  KIEDY:
+ *    - ESC_Init(&htim1)          — po starcie PWM na TIM1 (CubeMX).
+ *    - ESC_ArmNeutral(ms)        — jednorazowo po starcie (neutral 1500 µs przez ms).
+ *    - ESC_WritePercentRaw(ch,%) — w każdej iteracji Tank_Update (już po mapowaniu do okna ESC).
+ *    - ESC_SetNeutralAll()       — natychmiastowy neutral na obu kanałach (stan bezpieczny).
+ *
+ *  SKALA:
+ *    - ESC_WritePercentRaw: „surowy” % w zakresie −100..0..+100 (0 = 1500 µs; ±100 = skraje).
+ *      Przycięcie do zakresu odbywa się w implementacji.
+ * ============================================================================
  */
-
-#ifndef MOTOR_BLDC_H
-#define MOTOR_BLDC_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "main.h"
-#include "tim.h"
-#include <stdint.h>
+#include <stdint.h>                 // int8_t, uint16_t, uint32_t
+#include "stm32l4xx_hal.h"          // TIM_HandleTypeDef (uchwyt timera z CubeMX)
 
-/* Kanały ESC na TIM1 */
+/* ----------------------------------------------------------------------------
+ *  Kanały ESC na TIM1 — przyporządkowanie fizycznych wyjść (spójne w całym projekcie).
+ *  ESC_CH1 → TIM1_CH1 = PA8  (Right)
+ *  ESC_CH4 → TIM1_CH4 = PA11 (Left)
+ * ---------------------------------------------------------------------------- */
 typedef enum {
-    ESC_CH1 = 0,   /* TIM1_CH1 → PA8  (Right) */
-    ESC_CH4        /* TIM1_CH4 → PA11 (Left)  */
+    ESC_CH1 = 0,                     // Right  — TIM1 Channel 1 (PA8)
+    ESC_CH4 = 1,                     // Left   — TIM1 Channel 4 (PA11)
 } ESC_Channel_t;
 
-/* Inicjalizacja i uzbrojenie (neutral) */
-void     ESC_Init(TIM_HandleTypeDef *htim);
-void     ESC_ArmNeutral(uint32_t neutral_ms);     /* blokujące – tylko na starcie */
+/* ----------------------------------------------------------------------------
+ *  Inicjalizacja warstwy ESC: zapamiętuje uchwyt TIM1, startuje PWM na CH1 i CH4,
+ *  oraz ustawia neutral na obu kanałach. Wywołaj raz po starcie systemu.
+ * ---------------------------------------------------------------------------- */
+void ESC_Init(TIM_HandleTypeDef *htim);
 
-/* Niskopoziomowe wyjście: µs lub „surowe” % (liniowo wokół neutralu) */
-void     ESC_WritePulseUs(ESC_Channel_t ch, uint16_t us);     /* 1000..2000 µs */
-void     ESC_WritePercentRaw(ESC_Channel_t ch, int8_t percent); /* -100..+100 → 1..2 ms */
-void     ESC_SetNeutralAll(void);
+/* ----------------------------------------------------------------------------
+ *  ARM sekwencja: wysyła neutral (1500 µs) na oba kanały i czeka neutral_ms.
+ *  UWAGA: Blokujące (HAL_Delay wewnątrz) — używać tylko w App_Init na starcie.
+ * ---------------------------------------------------------------------------- */
+void ESC_ArmNeutral(uint32_t neutral_ms);
 
-/* Stałe mapowania (pomoc w debugach/UI) */
-uint16_t ESC_GetMinUs(void);
-uint16_t ESC_GetNeuUs(void);
-uint16_t ESC_GetMaxUs(void);
+/* ----------------------------------------------------------------------------
+ *  Bezpośredni zapis impulsu w mikrosekundach (z przycięciem do okna min..max).
+ *  Użyteczne do diagnostyki lub ręcznego sterowania poza mapowaniem „%”.
+ * ---------------------------------------------------------------------------- */
+void ESC_WritePulseUs(ESC_Channel_t ch, uint16_t us);
+
+/* ----------------------------------------------------------------------------
+ *  „Surowy” zapis w skali −100..0..+100, liniowo mapowany na 1000..1500..2000 µs.
+ *  Ten poziom zakłada, że logika już uwzględniła okno ESC (esc_start_pct..esc_max_pct).
+ * ---------------------------------------------------------------------------- */
+void ESC_WritePercentRaw(ESC_Channel_t ch, int8_t percent);
+
+/* ----------------------------------------------------------------------------
+ *  Ustaw neutral (1500 µs) na obu kanałach jednocześnie — stan bezpieczny.
+ * ---------------------------------------------------------------------------- */
+void ESC_SetNeutralAll(void);
+
+/* ----------------------------------------------------------------------------
+ *  Gettery zakresów — przydatne do diagnostyki (OLED/UART) i weryfikacji mapowania.
+ * ---------------------------------------------------------------------------- */
+uint16_t ESC_GetMinUs(void);         // zwraca dolną granicę (np. 1000 µs)
+uint16_t ESC_GetNeuUs(void);         // zwraca neutral (np. 1500 µs)
+uint16_t ESC_GetMaxUs(void);         // zwraca górną granicę (np. 2000 µs)
 
 #ifdef __cplusplus
 }
 #endif
-#endif /* MOTOR_BLDC_H */
