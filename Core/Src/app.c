@@ -1,126 +1,163 @@
-#include <stdio.h>
-#include <string.h>
-#include <stdarg.h>
+/*
+ * ============================================================================
+ *  MODULE: app  —  warstwa aplikacyjna (inicjalizacja systemu + harmonogram)
+ *  ----------------------------------------------------------------------------
+ *  CO:
+ *    - App_Init()  : jednorazowy start systemu (inicjalizacja peryferiów i modułów, ARM ESC).
+ *    - App_Tick()  : nieblokująca pętla zadań cyklicznych (napęd, sensory, OLED, UART).
+ *
+ *  PO CO:
+ *    - Oddzielenie logiki „co i kiedy” od main.c, który pozostaje minimalny.
+ *    - Jedno miejsce sterujące rytmem całej aplikacji (łatwe strojenie i debug).
+ *
+ *  KIEDY:
+ *    - App_Init()  wołane raz po starcie (po HAL initach z CubeMX).
+ *    - App_Tick()  wołane w każdej iteracji while(1) — bez opóźnień blokujących.
+ *
+ *  USTALENIA:
+ *    - Nazwy funkcji, struktur i zmiennych — BEZ ZMIAN (spójne z projektem).
+ *    - Interwały PERIOD_* pobierane z config.c przez CFG_Scheduler(), ale zachowujemy
+ *      stare nazwy PERIOD_SENS_MS / PERIOD_OLED_MS / PERIOD_UART_MS.
+ *    - Napęd: TIM1 CH1=PA8 (Right), CH4=PA11 (Left). ARM ESC: 3000 ms neutralu na starcie.
+ *
+ *  UWAGI DOT. BEZPIECZEŃSTWA:
+ *    - Brak HAL_Delay w App_Tick() — wszystko nieblokujące.
+ *    - Jedyny HAL_Delay jest w ESC_ArmNeutral(3000) w App_Init() — wymaganie ESC.
+ * ============================================================================
+ */
 
-#include "app.h"
+#include "app.h"              // prototypy App_Init/App_Tick
+#include "config.h"           // CFG_Scheduler(), CFG_Motors() — okresy i rytm napędu
 
-#include "main.h"
-#include "i2c.h"
-#include "tim.h"
-#include "usart.h"
-#include "gpio.h"
+/* HAL i peryferia z projektu */
+#include "stm32l4xx_hal.h"    // HAL_GetTick()
+#include "i2c.h"              // hi2c1, hi2c3
+#include "usart.h"            // huart2
+#include "tim.h"              // htim1
 
-/* moduły projektu */
-#include "tf_luna_i2c.h"
-#include "tcs3472.h"
-#include "ssd1306.h"
-#include "oled_panel.h"
-#include "debug_uart.h"
-#include "i2c_scan.h"
-#include "config.h"
-#include "motor_bldc.h"
-#include "tank_drive.h"
-#include "drive_test.h"
+/* Moduły projektu (nazwy z Twojego baseline) */
+#include "tf_luna_i2c.h"      // TF_Luna_*()
+#include "tcs3472.h"          // TCS3472_*()
+#include "ssd1306.h"          // SSD1306_Init()
+#include "oled_panel.h"       // OLED_Panel_ShowSensors(...)
+#include "debug_uart.h"       // DebugUART_*()
+#include "i2c_scan.h"         // I2C_Scan_All()
+#include "motor_bldc.h"       // ESC_Init(), ESC_ArmNeutral()
+#include "tank_drive.h"       // Tank_Init(), Tank_Update()
+#include "drive_test.h"       // DriveTest_Start(), DriveTest_Tick()
 
-/* Okresy zadań (ms) – identycznie jak dotąd */
-#define PERIOD_SENS_MS    100U
-#define PERIOD_OLED_MS    200U
-#define PERIOD_UART_MS    200U
+/* ========================================================================== */
+/*  Interwały zadań — UTRZYMUJEMY STARE NAZWY MAKRO, ale źródłem jest config. */
+/*  Dzięki temu nie dotykamy reszty kodu, a wartości stroimy w config.c.      */
+/* ========================================================================== */
+#ifndef PERIOD_SENS_MS
+#  define PERIOD_SENS_MS  (CFG_Scheduler()->sens_ms)   // odczyt sensorów (TF-Luna/TCS)
+#endif
+#ifndef PERIOD_OLED_MS
+#  define PERIOD_OLED_MS  (CFG_Scheduler()->oled_ms)   // odświeżanie OLED
+#endif
+#ifndef PERIOD_UART_MS
+#  define PERIOD_UART_MS  (CFG_Scheduler()->uart_ms)   // odświeżanie panelu UART
+#endif
 
-/* Bufory na ostatnie dobre pomiary */
-static TF_LunaData_t   g_RightLuna = {0};
-static TF_LunaData_t   g_LeftLuna  = {0};
-static TCS3472_Data_t  g_RightColor= {0};
-static TCS3472_Data_t  g_LeftColor = {0};
+/* ============================================================================
+ *  Stan lokalny modułu app (wyłącznie dla App_Init/App_Tick)
+ *  (Trzymamy tu tylko to, co potrzebne do rytmu zadań.)
+ * ========================================================================== */
 
-/* Zegary odświeżania */
-static uint32_t tTank = 0;
-static uint32_t tSens = 0;
-static uint32_t tOLED = 0;
-static uint32_t tUART = 0;
+/* Bufory danych sensorów — tak jak było w Twoim main.c */
+static TF_LunaData_t   g_RightLuna = {0};   // TF-Luna (Right, I2C1)
+static TF_LunaData_t   g_LeftLuna  = {0};   // TF-Luna (Left,  I2C3)
+static TCS3472_Data_t  g_RightColor= {0};   // TCS3472 (Right, I2C1)
+static TCS3472_Data_t  g_LeftColor = {0};   // TCS3472 (Left,  I2C3)
 
+/* Zegary soft-timerów (ms) — znaczniki ostatniego wykonania zadań */
+static uint32_t tTank = 0;  // rytm napędu wg CFG_Motors()->tick_ms (rampa, reverse-gate)
+static uint32_t tSens = 0;  // co PERIOD_SENS_MS — odczyty TF-Luna i TCS3472
+static uint32_t tOLED = 0;  // co PERIOD_OLED_MS — odświeżenie OLED
+static uint32_t tUART = 0;  // co PERIOD_UART_MS — odświeżenie panelu UART
+
+/* ============================================================================
+ *  App_Init() — jednorazowa inicjalizacja aplikacji (po initach Cube/HAL)
+ * ========================================================================== */
 void App_Init(void)
 {
-    /* 1) UART + skan I2C */
-    DebugUART_Init(&huart2);
+    /* 1) UART + skan I2C — szybka diagnostyka, jak miałeś w baseline */
+    DebugUART_Init(&huart2);                           // ustaw printf/ANSI na UART2
     DebugUART_Printf("\r\n=== DzikiBoT – start (clean) ===");
     DebugUART_Printf("UART ready @115200 8N1");
-    // Przeskanuj obie magistrale I²C — szybka diagnostyka adresów
-    I2C_Scan_All();            /* korzysta z hi2c1 i hi2c3 */
+    I2C_Scan_All();                                    // przeskanuj I2C1 i I2C3
 
-    /* 2) Sensory + OLED */
-    TF_Luna_Right_Init(&hi2c1);  /* Right (I2C1) */
-    TF_Luna_Left_Init (&hi2c3);  /* Left  (I2C3) */
+    /* 2) Sensory + OLED — inicjalizacja obu TF-Luna i obu TCS3472, a następnie OLED */
+    TF_Luna_Right_Init(&hi2c1);                        // Right (I2C1)
+    TF_Luna_Left_Init (&hi2c3);                        // Left  (I2C3)
+    TCS3472_Right_Init(&hi2c1);                        // Right (I2C1)
+    TCS3472_Left_Init (&hi2c3);                        // Left  (I2C3)
 
-    TCS3472_Right_Init(&hi2c1);  /* Right (I2C1) */
-    TCS3472_Left_Init (&hi2c3);  /* Left  (I2C3) */
-
-    SSD1306_Init();
+    SSD1306_Init();                                    // uruchom wyświetlacz
     DebugUART_Printf("SSD1306 init OK.");
 
-    /* 3) ESC + TankDrive */
-    ESC_Init(&htim1);
-    // 3 s neutralu: pewne „arming” ESC po starcie
-    ESC_ArmNeutral(3000);         /* 3 s neutral – tak jak miałeś */
-    Tank_Init(&htim1);
+    /* 3) ESC + TankDrive — zgodnie z Twoją kolejnością */
+    ESC_Init(&htim1);                                  // kanały: CH1=PA8 (Right), CH4=PA11 (Left)
+    ESC_ArmNeutral(3000);                              // ~3 s neutralu na starcie (arming ESC)
+    Tank_Init(&htim1);                                 // spięcie logiki napędu z wyjściem PWM
+
+    /* 4) Start testu jazdy (nieblokujący) */
     DriveTest_Start();
 
-    DebugUART_Printf("ESC + TankDrive ready.");
+    /* 5) Pierwsze odczyty sensorów — żeby OLED/UART miały realne dane od razu */
+    g_RightLuna  = TF_Luna_Right_Read();
+    g_LeftLuna   = TF_Luna_Left_Read();
+    g_RightColor = TCS3472_Right_Read();
+    g_LeftColor  = TCS3472_Left_Read();
 
-    /* 4) Pierwsze odczyty – zasianie struktur */
-    // Pierwszy odczyt — zasiej strukturę prawą TF-Luna
-    g_RightLuna = TF_Luna_Right_Read();
-    // Pierwszy odczyt — zasiej strukturę lewą TF-Luna
-    g_LeftLuna  = TF_Luna_Left_Read();
-    g_RightColor= TCS3472_Right_Read();
-    g_LeftColor = TCS3472_Left_Read();
-
-    /* 5) start zegarów (dokładnie jak miałeś) */
-    tTank = tSens = tOLED = tUART = HAL_GetTick();
+    /* 6) Zerujemy znaczniki soft-timerów — aby pierwsza iteracja poszła „od razu” */
+    const uint32_t now = HAL_GetTick();
+    tTank = now;   // pętla napędu
+    tSens = now;   // sensory
+    tOLED = now;   // OLED
+    tUART = now;   // UART
 }
 
+/* ============================================================================
+ *  App_Tick() — nieblokująca pętla zadań cyklicznych (wołana w każdej iteracji while(1))
+ * ========================================================================== */
 void App_Tick(void)
 {
+    /* Pobieramy aktualny czas w ms (różnicowanie now - tX bezpieczne przy overflow) */
     const uint32_t now = HAL_GetTick();
 
-    /* 1) Tank – rampa/wygładzenie/kompensacja + test (co tick_ms z config) */
-    // Rytm napędu: co tick_ms
-    if ((now - tTank) >= CFG_Motors()->tick_ms) {
-        Tank_Update();
-        // Krok testu jazdy (sekcja FWD/NEU/REV) — opcjonalne
-        DriveTest_Tick();     /* test krokowy w tle */
-        tTank = now;
+    /* ===== 1) Pętla napędu — rampa + reverse-gate =====
+     * Rytm z CFG_Motors()->tick_ms (np. 20 ms ⇒ 50 Hz).
+     */
+    if ((uint32_t)(now - tTank) >= CFG_Motors()->tick_ms) {
+        tTank = now;                                     // znacznik „ostatnio wykonano”
+        DriveTest_Tick();                                // krok testu jazdy (nieblokujący)
+        Tank_Update();                                   // rampa, reverse-gate, mapowanie %→µs, balans torów
     }
 
-    /* 2) Sensory (TF-Luna + TCS3472) */
-    if ((now - tSens) >= PERIOD_SENS_MS) {
-
-        TF_LunaData_t r = TF_Luna_Right_Read();
-        TF_LunaData_t l = TF_Luna_Left_Read();
-        if (r.frameReady) g_RightLuna = r;
-        if (l.frameReady) g_LeftLuna  = l;
-
-        g_RightColor = TCS3472_Right_Read();
-        g_LeftColor  = TCS3472_Left_Read();
-
-        tSens = now;
+    /* ===== 2) Sensory (TF-Luna + TCS3472) =====
+     * Rytm z PERIOD_SENS_MS (wartość z CFG_Scheduler()->sens_ms).
+     */
+    if ((uint32_t)(now - tSens) >= PERIOD_SENS_MS) {
+        g_RightLuna  = TF_Luna_Right_Read();             // odczyt z prawego TF-Luna (I2C1)
+        g_LeftLuna   = TF_Luna_Left_Read();              // odczyt z lewego  TF-Luna (I2C3)
+        g_RightColor = TCS3472_Right_Read();             // odczyt z prawego TCS3472 (I2C1)
+        g_LeftColor  = TCS3472_Left_Read();              // odczyt z lewego  TCS3472 (I2C3)
+        tSens = now;                                     // zapamiętaj czas wykonania
     }
 
-    /* 3) OLED: panel 7 linii */
-    if ((now - tOLED) >= PERIOD_OLED_MS) {
+    /* ===== 3) OLED — panel 7 linii ===== */
+    if ((uint32_t)(now - tOLED) >= PERIOD_OLED_MS) {
         OLED_Panel_ShowSensors(&g_RightLuna, &g_LeftLuna,
-                               &g_RightColor, &g_LeftColor);
+                               &g_RightColor, &g_LeftColor); // prezentacja na SSD1306
         tOLED = now;
     }
 
-    /* 4) UART: panel ANSI „w miejscu” */
-    if ((now - tUART) >= PERIOD_UART_MS) {
+    /* ===== 4) UART — panel w miejscu (ANSI) ===== */
+    if ((uint32_t)(now - tUART) >= PERIOD_UART_MS) {
         DebugUART_SensorsDual(&g_RightLuna, &g_LeftLuna,
-                              &g_RightColor, &g_LeftColor);
+                              &g_RightColor, &g_LeftColor);  // ten sam układ co OLED
         tUART = now;
     }
-
-    /* 5) tu w przyszłości AI Sumo:
-       AI_Sumo_Update(...);
-    */
 }

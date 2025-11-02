@@ -197,10 +197,6 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-/* =========================
- *   A P L I K A C J A
- * ========================= */
-
 
 
 /* USER CODE END 4 */
