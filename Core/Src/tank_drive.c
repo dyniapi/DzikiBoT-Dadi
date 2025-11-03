@@ -146,22 +146,37 @@ static float ema_step(float prev, float in, float alpha)
 }
 
 /* map_logic_to_esc_window:
- *  - wejście: komenda w skali logicznej −100..0..+100,
+ *  - wejście: komenda w skali logicznej −100..0..+100 (float po filtrach),
  *  - wyjście: „surowy” % wokół neutralu dla ESC, ale zawężony do [start..max],
  *  - 0 → neutral (0%), dodatnie → powyżej neutralu, ujemne → poniżej.
- *  - docelowo warstwa ESC przemapuje % liniowo na 1000..2000 µs (1..2 ms). */
-static int8_t map_logic_to_esc_window(int8_t x)
+ *  - docelowo warstwa ESC przemapuje % liniowo na 1000..2000 µs (1..2 ms).
+ *  - zachowujemy rozdzielczość aż do samego mapowania (zaokrąglanie na końcu). */
+static int8_t map_logic_to_esc_window(float x)
 {
     const uint8_t start = C->esc_start_pct;   /* np. 30% — wyjście z martwej strefy        */
     const uint8_t max   = C->esc_max_pct;     /* np. 60% — nasz „sufit” dla 100% logicznego */
 
-    if (x == 0) return 0;                     /* 0 logiczne = neutral (1500 µs)            */
+    if (x > -0.0001f && x < 0.0001f) {        /* 0 logiczne = neutral (1500 µs)            */
+        return 0;
+    }
 
-    const int8_t sign = (x < 0) ? -1 : +1;    /* znak komendy — określa kierunek            */
-    int          mag  = (x < 0) ? -x : x;     /* moduł (0..100)                             */
+    const int8_t sign = (x < 0.0f) ? -1 : +1; /* znak komendy — określa kierunek            */
+    float        mag  = (x < 0.0f) ? -x : x;  /* moduł (0..100)                             */
+    if (mag > 100.0f) {
+        mag = 100.0f;
+    }
 
-    /* Liniowy udział w oknie [start..max], z kontrolą brzegów. */
-    int esc_pct = (int)start + ((int)(max - start) * mag) / 100;
+    /* Liniowy udział w oknie [start..max] (float), a następnie zaokrąglenie. */
+    const float span   = (float)((int)max - (int)start);
+    float       esc    = (float)start + span * (mag * 0.01f);
+    int         esc_pct;
+
+    if (esc >= 0.0f) {
+        esc_pct = (int)(esc + 0.5f);
+    } else {
+        esc_pct = (int)(esc - 0.5f);
+    }
+
     if (esc_pct < (int)start) esc_pct = (int)start;   /* zabezpieczenie dolnej krawędzi */
     if (esc_pct > (int)max)   esc_pct = (int)max;     /* zabezpieczenie górnej krawędzi */
 
@@ -255,8 +270,8 @@ void Tank_Update(void)
     const float compR = clampf(s.flt_R * C->right_scale, -100.0f, 100.0f);
 
     /* 4) Mapowanie do okna ESC i wyjście do warstwy PWM (Left→CH4, Right→CH1) */
-    const int8_t outL_raw = map_logic_to_esc_window((int8_t)compL); /* −100..+100 (wokół 0) */
-    const int8_t outR_raw = map_logic_to_esc_window((int8_t)compR);
+    const int8_t outL_raw = map_logic_to_esc_window(compL); /* −100..+100 (wokół 0) */
+    const int8_t outR_raw = map_logic_to_esc_window(compR);
 
     ESC_WritePercentRaw(ESC_CH4, outL_raw);  /* Left  – TIM1_CH4 (PA11)  → RC 1..2 ms */
     ESC_WritePercentRaw(ESC_CH1, outR_raw);  /* Right – TIM1_CH1 (PA8)   → RC 1..2 ms */
