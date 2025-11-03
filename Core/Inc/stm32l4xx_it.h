@@ -1,12 +1,3 @@
-/**
- * @file    stm32l4xx_it.h
- * @brief   Moduł projektu DzikiBoT.
- * @date    2025-11-02
- *
- * Uwaga:
- *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
- */
-
 /* USER CODE BEGIN Header */
 
 /* USER CODE END Header */
@@ -51,6 +42,7 @@ void PendSV_Handler(void);
 void SysTick_Handler(void);
 void I2C1_EV_IRQHandler(void);
 void I2C1_ER_IRQHandler(void);
+void USART2_IRQHandler(void);
 void I2C3_EV_IRQHandler(void);
 void I2C3_ER_IRQHandler(void);
 /* USER CODE BEGIN EFP */

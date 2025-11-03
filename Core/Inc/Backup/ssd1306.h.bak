@@ -1,23 +1,10 @@
 /**
- ******************************************************************************
  * @file    ssd1306.h
- * @brief   Sterownik OLED SSD1306 (128x64, I2C) + czcionka ASCII 6x8
- * @version 1.0
- * @date    2025-10-24
+ * @brief   Wyświetlacz SSD1306 i panel diagnostyczny — prezentacja danych.
+ * @date    2025-11-02
  *
- * Funkcje wysokiego poziomu:
- *  - SSD1306_Init()                 : inicjalizacja wyświetlacza
- *  - SSD1306_Clear()                : czyszczenie bufora ekranu (na czarno)
- *  - SSD1306_UpdateScreen()         : wysłanie bufora do OLED
- *  - SSD1306_DrawText(page, str)    : napis od x=0 w podanej stronie (co 8 px pionowo)
- *  - SSD1306_DrawTextAt(page, x, s) : napis od (x, page)
- *  - SSD1306_SetContrast(val)       : kontrast (0..255)
- *  - SSD1306_DrawHLine(y, x0, x1)   : pozioma linia na wysokości y
- *  - OLED_ShowSensors(...)          : panel diagnostyczny 4-liniowy
- *
- * Uwaga o „page”:
- *  - Wysokość 64 px = 8 „stron” po 8 px: page = 0..7 (typowo używamy 0,2,4,6 dla 4 linii)
- ******************************************************************************
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
  */
 
 #ifndef SSD1306_H_

@@ -1,20 +1,3 @@
-/**
- * @file    i2c.c
- * @brief   Moduł projektu DzikiBoT.
- * @date    2025-11-02
- *
- * Uwaga:
- *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
- *
- * Funkcje w pliku (skrót):
- *   - MX_I2C1_Init(void)
- *   - MX_I2C3_Init(void)
- *   - HAL_I2C_MspInit(I2C_HandleTypeDef* i2cHandle)
- *   - if(i2cHandle->Instance==I2C3)
- *   - HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
- *   - if(i2cHandle->Instance==I2C3)
- */
-
 /* USER CODE BEGIN Header */
 
 /* USER CODE END Header */

@@ -1,145 +1,211 @@
 /**
  * @file    debug_uart.c
- * @brief   Panel UART 115200 8N1 (ANSI) do debugowania „w miejscu”.
- * @date    2025-11-02
+ * @brief   Debug panel UART (ANSI) — wysyłanie nieblokujące (IRQ) + licznik dropów.
+ * @date    2025-11-03
  *
- * CO:
- *   - Czyści terminal i rysuje dwukolumnowy panel: RIGHT(I2C1) | LEFT(I2C3).
- *   - Pokazuje status ramki, dystans (MED), siłę (MA), temperaturę modułu (°C)
- *     oraz Ambient (est.) – oszacowanie temp. otoczenia na podstawie offsetu z config.
+ * Założenia:
+ *   - Brak użycia HAL_MAX_DELAY, brak blokowania pętli głównej.
+ *   - HAL_UART_Transmit_IT + wewnętrzny bufor kołowy TX (ring buffer).
+ *   - Kompatybilne API z Twoim core.zip (Init/Print/Printf/SensorsDual).
  *
- * PO CO:
- *   - Szybka diagnostyka bez potrzeby podpinania debuggera; widzisz stan czujników
- *     i temperaturę (moduł + ambient est.) w czasie rzeczywistym.
- *
- * KIEDY:
- *   - Wywołuj DebugUART_SensorsDual() cyklicznie co CFG_Scheduler()->uart_ms.
- *
- * UWAGI:
- *   - Do Ambient (est.) używamy TF_Luna_AmbientEstimateC(&data), która dodaje offset
- *     CFG_Luna()->temp_offset_c i zaokrągla do 0.1°C.
+ * Wymagania:
+ *   - Włączone NVIC dla USART2 (lub używanego UARTu).
+ *   - W stm32l4xx_it.c: USARTx_IRQHandler wywołuje HAL_UART_IRQHandler(&huartx).
  */
 
-#include "debug_uart.h"       // publiczne API modułu
-#include <string.h>           // strlen, memset
-#include <stdio.h>            // snprintf, vsnprintf
-#include <stdarg.h>           // va_list, va_start, va_end
+#include "debug_uart.h"     // publiczne API tego modułu
+#include <string.h>         // strlen, memset
+#include <stdio.h>          // snprintf, vsnprintf
+#include <stdarg.h>         // va_list, va_start, va_end
 
-#include "stm32l4xx_hal.h"    // HAL_UART_Transmit
-#include "tf_luna_i2c.h"      // TF_LunaData_t, TF_Luna_AmbientEstimateC
-#include "tcs3472.h"          // TCS3472_Data_t (typ danych z czujnika kolorów)
+/* ======================== Stan modułu (prywatny) ====================== */
 
-/* ========================== UCHWYT LOKALNY ========================== */
-/* Przechowujemy wskaźnik na UART ustawiony w DebugUART_Init().        */
+/* Wskaźnik na uchwyt UART przekazany w DebugUART_Init() */
 static UART_HandleTypeDef *s_uart = NULL;
 
-/* ============================== API ================================= */
+/* Bufor kołowy TX — kolejka wysyłanych bajtów (wewnętrzna) */
+static uint8_t s_tx_rb[DEBUG_UART_RB_SIZE];  // pamięć bufora
+static volatile size_t s_head = 0;           // indeks dopisywania (head)
+static volatile size_t s_tail = 0;           // indeks czytania (tail)
 
+/* Flagi/zmienne stanu TX */
+static volatile uint8_t s_tx_busy = 0;       // 1 = aktualnie trwa wysyłka (IT)
+static size_t s_active_len = 0;              // ile bajtów ma bieżąca porcja (chunk)
+
+/* Licznik “utraconych bajtów” przy przepełnieniu bufora (diagnostyka) */
+static volatile uint32_t s_tx_dropped = 0;
+
+/* Krótkie makra sekcji krytycznej (blokada przerwań na modyfikację head/tail) */
+#ifndef ENTER_CRIT
+#define ENTER_CRIT()  uint32_t _primask = __get_PRIMASK(); __disable_irq()
+#define EXIT_CRIT()   do { if(!_primask) __enable_irq(); } while(0)
+#endif
+
+/* Pomocnicze: ile zajęte/ile wolne w kolejce (1 bajt pustki dla rozróżnienia) */
+static inline size_t rb_used(void) { return (s_head - s_tail) % DEBUG_UART_RB_SIZE; }
+static inline size_t rb_free(void) { return DEBUG_UART_RB_SIZE - 1u - rb_used(); }
+
+/* ================== Rozpoczęcie wysyłki porcji (prywatne) ============= */
+
+/* Startuje wysyłanie kolejnej porcji, jeśli nic nie leci.
+ * Porcja = ciągły fragment od tail do końca bufora (żeby nie owijać). */
+static void try_kick_tx(void)
+{
+    if (!s_uart) return;                 // brak uchwytu UART → nic nie robimy
+    if (s_tx_busy) return;               // poprzednia porcja jeszcze leci → poczekaj
+
+    size_t head = s_head;                // lokalne kopie (atomowe odczyty)
+    size_t tail = s_tail;
+
+    if (head == tail) return;            // kolejka pusta → nie ma czego wysłać
+
+    /* Wyznacz “chunk” jako liniowy fragment do końca bufora */
+    size_t chunk = (head > tail) ? (head - tail) : (DEBUG_UART_RB_SIZE - tail);
+
+    s_active_len = chunk;                // zapamiętaj, ile bajtów wysyłamy w tej porcji
+    s_tx_busy = 1;                       // oznacz, że TX jest zajęty
+
+    /* Uruchom asynchroniczną transmisję przerwaniami (bez blokowania) */
+    HAL_StatusTypeDef st = HAL_UART_Transmit_IT(s_uart, &s_tx_rb[tail], (uint16_t)chunk);
+    if (st != HAL_OK)                    // jeśli HAL nie wystartował (np. błąd)
+    {
+        s_tx_busy = 0;                   // zwolnij busy — spróbujemy później
+        s_active_len = 0;                // nic nie poszło
+        /* Uwaga: nie przesuwamy tail, bo nic nie wysłano. */
+    }
+}
+
+/* ============================ Enqueue (priv) ========================== */
+
+/* Wrzuca len bajtów do kolejki TX. Zwraca ile faktycznie dopisano.
+ * Jeśli brak miejsca — nadmiar jest odrzucany, a licznik dropów inkrementowany. */
+static size_t DebugUART_Write(const void *data, size_t len)
+{
+    if (!s_uart || !data || len == 0) return 0;   // brak UART/danych → nic do zrobienia
+
+    const uint8_t *p = (const uint8_t*)data;      // rzut na bajty
+    size_t written = 0;                            // ile dopisaliśmy
+
+    ENTER_CRIT();                                  // modyfikacja wskaźników wymaga sekcji krytycznej
+    while (written < len)                          // dopóki mamy bajty na wejściu
+    {
+        if (rb_free() == 0) {                      // brak miejsca w buforze?
+            s_tx_dropped += (uint32_t)(len - written); // zlicz “utracone” bajty
+            break;                                  // przerwij (bez blokowania CPU)
+        }
+        s_tx_rb[s_head] = p[written];              // zapisz bajt pod head
+        s_head = (s_head + 1u) % DEBUG_UART_RB_SIZE; // przesuwamy head (zawijanie)
+        written++;                                  // policz zapisany bajt
+    }
+    EXIT_CRIT();                                   // odblokuj IRQ
+
+    try_kick_tx();                                 // spróbuj wystartować wysyłkę, jeśli stoję
+    return written;                                // może być < len przy przepełnieniu
+}
+
+/* ============================== API ================================== */
+
+/* Inicjalizacja modułu: zapamiętuje uchwyt, czyści kolejkę/flagę/liczniki. */
 void DebugUART_Init(UART_HandleTypeDef *huart)
 {
-    /* Zapamiętaj uchwyt UART do późniejszych transmisji. */
-    s_uart = huart;
+    s_uart = huart;                 // pamiętaj, którego UARTu używamy (np. &huart2)
+    ENTER_CRIT();                   // reset stanu w sekcji krytycznej
+    s_head = s_tail = 0;            // pusta kolejka TX
+    s_tx_busy = 0;                  // brak trwającej wysyłki
+    s_active_len = 0;               // brak aktywnej porcji
+    s_tx_dropped = 0;               // wyzeruj licznik dropów
+    EXIT_CRIT();                    // koniec resetu
 }
 
+/* Wysyła podany string + CRLF (enqueue, nieblokujące). */
 void DebugUART_Print(const char *s)
 {
-    /* Bezpieczeństwo: brak UART lub brak stringa → nic nie rób. */
-    if (s_uart == NULL || s == NULL) {
-        return;
-    }
-
-    /* Wyślij treść… */
-    HAL_UART_Transmit(s_uart, (uint8_t*)s, (uint16_t)strlen(s), HAL_MAX_DELAY);
-
-    /* …oraz CRLF na końcu (spójny styl w całym module). */
-    const char crlf[2] = "\r\n";
-    HAL_UART_Transmit(s_uart, (uint8_t*)crlf, (uint16_t)sizeof(crlf), HAL_MAX_DELAY);
+    if (!s) return;                                 // brak tekstu → nic
+    (void)DebugUART_Write(s, strlen(s));            // wrzuć treść do kolejki
+    (void)DebugUART_Write("\r\n", 2u);              // dopisz CRLF (spójny styl)
 }
 
+/* Wysyła sformatowany tekst (printf) + CRLF (enqueue, nieblokujące). */
 void DebugUART_Printf(const char *fmt, ...)
 {
-    if (s_uart == NULL || fmt == NULL) {
-        return;
-    }
+    if (!fmt) return;                               // brak formatu → nic
 
-    char buf[160];                       /* lokalny bufor formatowania */
-    va_list ap;
-    va_start(ap, fmt);
-    (void)vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
+    char buf[160];                                  // lokalny bufor formatowania (wystarczający na nasze linie)
+    va_list ap;                                     // lista argumentów zmiennych
+    va_start(ap, fmt);                              // start pobierania argumentów
+    (void)vsnprintf(buf, sizeof(buf), fmt, ap);     // sformatuj do bufora (z pilnowaniem rozmiaru)
+    va_end(ap);                                     // koniec pobierania argumentów
 
-    DebugUART_Print(buf);                /* wykorzystaj standardowy Print */
+    (void)DebugUART_Write(buf, strlen(buf));        // wrzuć sformatowaną treść
+    (void)DebugUART_Write("\r\n", 2u);              // CRLF
 }
 
-/* ============================ ANSI HELPER ============================ */
-/* Czyści cały ekran i ustawia kursor na (1,1).                         */
+/* Getter liczby bajtów utraconych (przepełnienia kolejki). */
+uint32_t DebugUART_Dropped(void)
+{
+    return s_tx_dropped;                            // proste odczytanie licznika
+}
+
+/* ========================= ANSI helper (priv) ======================== */
+
+/* Wyczyść ekran terminala i ustaw kursor na (1,1) — nieblokujące (enqueue). */
 static void term_clear(void)
 {
-    if (s_uart == NULL) {
-        return;
-    }
-    const char *cmd = "\x1b[2J\x1b[H";
-    HAL_UART_Transmit(s_uart, (uint8_t*)cmd, (uint16_t)strlen(cmd), HAL_MAX_DELAY);
+    static const char cmd[] = "\x1b[2J\x1b[H";      // ESC[2J (clear) + ESC[H (home)
+    (void)DebugUART_Write(cmd, sizeof(cmd) - 1u);   // do kolejki TX
 }
 
-/* ========================== PANEL DIAGNOSTYCZNY ====================== */
-/*
- * Dwukolumnowy panel: RIGHT(I2C1) | LEFT(I2C3)
- *  - Status ramki (OK / NO FRAME).
- *  - DIST (MED), STR (MA).
- *  - TEMP (module °C) oraz Ambient (est.) w °C.
- *
- * Wymagane:
- *  - TF_Luna_AmbientEstimateC() dostępne w tf_luna_i2c.c (prototyp w tf_luna_i2c.h).
- */
+/* ======================== Panel dwukolumnowy ========================= */
+
 void DebugUART_SensorsDual(const TF_LunaData_t *RightLuna,
                            const TF_LunaData_t *LeftLuna,
                            const TCS3472_Data_t *RightColor,
                            const TCS3472_Data_t *LeftColor)
 {
-    /* Wejścia muszą być poprawne; jeśli nie – nie rysujemy panelu. */
-    if (s_uart == NULL || RightLuna == NULL || LeftLuna == NULL ||
-        RightColor == NULL || LeftColor == NULL) {
-        return;
-    }
+    if (!s_uart || !RightLuna || !LeftLuna || !RightColor || !LeftColor)
+        return;                                     // brak danych/uart → nic nie drukuj
 
-    /* Czyść terminal i rysuj od zera. */
-    term_clear();
+    term_clear();                                   // nowa „rama” panelu
 
-    char line[160];
-    const char *stR = RightLuna->frameReady ? "OK " : "NO FRAME";
-    const char *stL = LeftLuna->frameReady  ? "OK " : "NO FRAME";
+    char line[160];                                 // wspólny bufor linii
+    const char *stR = RightLuna->frameReady ? "OK " : "NO FRAME"; // status prawej Luny
+    const char *stL = LeftLuna->frameReady  ? "OK " : "NO FRAME"; // status lewej Luny
 
-    DebugUART_Print("                  DzikiBoT (Parametry Sensorów)");
+    /* Nagłówek z diagnostyką dropów — pomoże namierzać przeciążenie kolejki */
+    (void)snprintf(line, sizeof(line),
+                   "DzikiBoT (Sensors)   UART dropped=%lu",
+                   (unsigned long)DebugUART_Dropped());
+    DebugUART_Print(line);
+
     DebugUART_Print("-------------------------------+-------------------------------------");
     DebugUART_Print("            RIGHT (I2C1)       |               LEFT (I2C3)");
     DebugUART_Print("-------------------------------+-------------------------------------");
 
-    /* DIST – mediana (distance_filt) */
+    /* DIST – filtr (mediana) */
     (void)snprintf(line, sizeof(line),
                    " Dist:  %4ucm  (%-8s)     | Dist:  %4ucm  (%-8s)",
                    (unsigned)RightLuna->distance_filt, stR,
                    (unsigned)LeftLuna->distance_filt,  stL);
     DebugUART_Print(line);
 
-    /* STR – średnia krocząca (strength_filt) */
+    /* STR – EMA/średnia krocząca siły sygnału */
     (void)snprintf(line, sizeof(line),
                    " Str : %5u                   | Str : %5u",
                    (unsigned)RightLuna->strength_filt,
                    (unsigned)LeftLuna->strength_filt);
     DebugUART_Print(line);
 
-    /* TEMP (module °C) – bezpośrednio z drivera (już 0.1°C) */
+    /* TEMP – temperatura modułu (°C) */
     (void)snprintf(line, sizeof(line),
                    " Temp: %5.1f C                 | Temp: %5.1f C",
                    (double)RightLuna->temperature,
                    (double)LeftLuna->temperature);
     DebugUART_Print(line);
 
-    /* AMBIENT (est.) – oszacowanie na podstawie offsetu z CFG_Luna()->temp_offset_c */
+    /* AMBIENT (est.) – estymacja otoczenia z drivera TF_Luna */
     {
-        float ambR = TF_Luna_AmbientEstimateC(RightLuna);
-        float ambL = TF_Luna_AmbientEstimateC(LeftLuna);
+        float ambR = TF_Luna_AmbientEstimateC(RightLuna);  // estymacja prawej
+        float ambL = TF_Luna_AmbientEstimateC(LeftLuna);   // estymacja lewej
 
         (void)snprintf(line, sizeof(line),
                        " Amb.: %5.1f C (est)           | Amb.: %5.1f C (est)",
@@ -149,21 +215,37 @@ void DebugUART_SensorsDual(const TF_LunaData_t *RightLuna,
 
     DebugUART_Print("-------------------------------+-------------------------------------");
 
-    /* RGB/C (skalowane /64 – spójnie z dotychczasowym UI) */
+    /* RGB/C — spójnie z UI (skalowanie /64) */
     {
-        unsigned rR = RightColor->red   / 64U;
-        unsigned gR = RightColor->green / 64U;
-        unsigned bR = RightColor->blue  / 64U;
-        unsigned cR = RightColor->clear / 64U;
+        unsigned rR = RightColor->red   / 64u;
+        unsigned gR = RightColor->green / 64u;
+        unsigned bR = RightColor->blue  / 64u;
+        unsigned cR = RightColor->clear / 64u;
 
-        unsigned rL = LeftColor->red    / 64U;
-        unsigned gL = LeftColor->green  / 64U;
-        unsigned bL = LeftColor->blue   / 64U;
-        unsigned cL = LeftColor->clear  / 64U;
+        unsigned rL = LeftColor->red    / 64u;
+        unsigned gL = LeftColor->green  / 64u;
+        unsigned bL = LeftColor->blue   / 64u;
+        unsigned cL = LeftColor->clear  / 64u;
 
         (void)snprintf(line, sizeof(line),
                        " R:%4u G:%4u B:%4u C:%5u  | R:%4u G:%4u B:%4u C:%5u",
                        rR, gR, bR, cR, rL, gL, bL, cL);
         DebugUART_Print(line);
     }
+}
+
+/* ===================== HAL callback przerwania TX ==================== */
+
+/* Wywoływana przez HAL po zakończeniu wysyłania bieżącej porcji (chunk). */
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart != s_uart) return;                     // filtr: tylko nasz UART
+
+    ENTER_CRIT();                                    // modyfikujemy tail/flagę
+    s_tail = (s_tail + s_active_len) % DEBUG_UART_RB_SIZE; // przesuń ogon o wysłaną porcję
+    s_active_len = 0;                                // porcja już wysłana
+    s_tx_busy = 0;                                   // TX wolny — można ruszyć następną
+    EXIT_CRIT();                                     // koniec sekcji krytycznej
+
+    try_kick_tx();                                   // jeśli są kolejne bajty — start kolejnej porcji
 }

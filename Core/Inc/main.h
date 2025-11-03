@@ -1,12 +1,3 @@
-/**
- * @file    main.h
- * @brief   Moduł projektu DzikiBoT.
- * @date    2025-11-02
- *
- * Uwaga:
- *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
- */
-
 /* USER CODE BEGIN Header */
 
 /* USER CODE END Header */

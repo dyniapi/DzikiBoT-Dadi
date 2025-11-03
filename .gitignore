@@ -48,6 +48,9 @@ out/
 # Preferencje specyficzne dla CubeIDE
 stm32cubeide.project.prefs
 
+# ignoruj wszystkie pliki kopii
+*.bak
+
 # ============== STM32CubeMX ==============
 # ZOSTAW *.ioc w repo (podstawa generacji kodu)!
 # Czasem obok *.ioc pojawiają się pliki/katalogi zależne od środowiska – ignoruj:

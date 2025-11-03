@@ -1,21 +1,22 @@
-/* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file    i2c.c
-  * @brief   This file provides code for the configuration
-  *          of the I2C instances.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2025 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
+ * @file    i2c.c
+ * @brief   Moduł projektu DzikiBoT.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ *
+ * Funkcje w pliku (skrót):
+ *   - MX_I2C1_Init(void)
+ *   - MX_I2C3_Init(void)
+ *   - HAL_I2C_MspInit(I2C_HandleTypeDef* i2cHandle)
+ *   - if(i2cHandle->Instance==I2C3)
+ *   - HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
+ *   - if(i2cHandle->Instance==I2C3)
+ */
+
+/* USER CODE BEGIN Header */
+
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "i2c.h"

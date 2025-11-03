@@ -1,277 +1,173 @@
 /**
- * @file    tf_luna_i2c.c
- * @brief   TF-Luna (I2C) – dwa czujniki: Right=I2C1, Left=I2C3
+ * ============================================================================
+ *  MODULE: tf_luna_i2c — minimalna obsługa TF-Luna (I²C)
+ *  ----------------------------------------------------------------------------
+ *  CO:
+ *    • Czytamy tylko rejestry 0x00..0x05 (I²C): DIST_L/H, AMP_L/H, TEMP_L/H.
+ *    • Temperatura w I²C jest w setnych °C → tempC = (int16_t(TEMP) / 100.0f).
+ *    • Filtry: MED (distance) + MA (strength) wg okien z config.c (1..5; MED nieparzyste).
+ *    • Zwracamy °C zaokrąglone do 0.1°C (bez <math.h>).
  *
- * Ramka 9 bajtów:
- *   [0]=0x59 [1]=0x59 [2]=DistL [3]=DistH [4]=StrL [5]=StrH [6]=TempL [7]=TempH [8]=Sum
- * Suma: (b0..b7) mod 256 == b8
- *
- * Wersja na bazie Twojego działającego pliku (zachowany sposób odczytu),
- * ale zintegrowana z config.[ch]:
- *  - okna filtrów (MED/MA), skala temperatury, offsety dystansu P/L → CFG_Luna()
- *  - brak twardego „odrzucania” ramek progami (żeby UI zawsze miało dane)
- *  - poprawione nawiasy przy if (bez „misleading-indentation”)
+ *  PO CO:
+ *    • Prościej, krócej, czytelniej — zero nieużywanych ścieżek (burst/CRC/auto-detect/reset).
+ * ============================================================================
  */
 
-#include "tf_luna_i2c.h"
-#include "config.h"
-#include <string.h>
-#include "stm32l4xx_hal.h"
+#include "tf_luna_i2c.h"     // API i typy modułu
+#include "config.h"          // CFG_Luna(): median_win, ma_win, temp_scale, temp_offset_c
+#include <string.h>          // memset
+#include "stm32l4xx_hal.h"   // HAL I2C, HAL_Delay (krótka przerwa między próbami)
 
-/* ───────────────────── Ustawienia magistrali ───────────────────── */
+/* ───────────── Adres i time-outy I²C ───────────── */
+#define TFLUNA_ADDR            (0x10u << 1)   /* 7-bit 0x10 → 8-bit dla HAL */
+#define TFLUNA_TRIES           3u             /* ile prób odczytu rejestrów */
+#define TFLUNA_TO_TX           10u            /* timeout TX (ms)            */
+#define TFLUNA_TO_RX           10u            /* timeout RX (ms)            */
 
-#define TFLUNA_ADDR               (0x10u << 1)  /* 7-bit 0x10 → 8-bit HAL */
-#define TFLUNA_READ_TRIES         3u
-#define TFLUNA_I2C_TIMEOUT_TX     10u
-#define TFLUNA_I2C_TIMEOUT_RX     10u
+/* ───────────── Uchwyt I²C dla prawego/lewego czujnika ───────────── */
+static I2C_HandleTypeDef *luna_right = NULL;  /* I2C1: prawa TF-Luna  */
+static I2C_HandleTypeDef *luna_left  = NULL;  /* I2C3: lewa  TF-Luna  */
 
-/* ───────────────────── Uchwyty I2C dla prawego/lewego ───────────────────── */
+void TF_Luna_Right_Init(I2C_HandleTypeDef *hi2c1) { luna_right = hi2c1; }  /* zapamiętaj I²C1 */
+void TF_Luna_Left_Init (I2C_HandleTypeDef *hi2c3) { luna_left  = hi2c3; }  /* zapamiętaj I²C3 */
 
-static I2C_HandleTypeDef *luna_right = NULL; // I2C1
-static I2C_HandleTypeDef *luna_left  = NULL; // I2C3
-
-void TF_Luna_Right_Init(I2C_HandleTypeDef *hi2c1) { luna_right = hi2c1; }
-void TF_Luna_Left_Init (I2C_HandleTypeDef *hi2c3) { luna_left  = hi2c3; }
-
-/* ───────────────────── Stan filtrów per-sensor ─────────────────────
- * Zostawiamy bufor o stałej wielkości 5 (tak jak w Twoim działającym kodzie).
- * Okna MED/MA bierzemy z config, ale CLAMP do 1..5 (MED dodatkowo → nieparzyste).
- */
+/* ───────────── Proste filtry: MED/MA w buforze pierścieniowym ───────────── */
 #define WIN_MAX 5u
 
 typedef struct {
-    uint16_t dist_hist[WIN_MAX];
-    uint16_t str_hist [WIN_MAX];
-    uint8_t  count;      /* ile już mamy (<= WIN_MAX) */
-    uint8_t  idx;        /* pozycja do nadpisania w pierścieniu */
-    float    last_tempC; /* ostatnia dobra temp (°C) */
-    uint16_t last_med;   /* ostatni MED distance */
-    uint16_t last_ma;    /* ostatni MA strength  */
+    uint16_t dist_hist[WIN_MAX];  /* historia dystansu (dla mediany)            */
+    uint16_t str_hist [WIN_MAX];  /* historia siły (dla średniej)               */
+    uint8_t  count;               /* ile wpisów mamy (<= WIN_MAX)               */
+    uint8_t  idx;                 /* indeks do nadpisania (ring buffer)         */
+    float    last_tempC;          /* ostatnia dobra temperatura (°C)            */
+    uint16_t last_med;            /* ostatnia mediana dystansu (cm)             */
+    uint16_t last_ma;             /* ostatnia średnia siły (raw)                */
 } tfluna_filt_t;
 
-static tfluna_filt_t filt_right = {0};
-static tfluna_filt_t filt_left  = {0};
+static tfluna_filt_t filt_right = {0};  /* stan filtrów: prawy czujnik */
+static tfluna_filt_t filt_left  = {0};  /* stan filtrów: lewy  czujnik */
 
-void TF_Luna_Right_ResetFilters(void) { memset(&filt_right, 0, sizeof(filt_right)); }
-void TF_Luna_Left_ResetFilters(void)  { memset(&filt_left,  0, sizeof(filt_left));  }
-
-/* ───────────────────── Pomocnicze ───────────────────── */
-
-static inline float absf_fast(float x) { return (x < 0.0f) ? -x : x; }
-
-/* Suma kontrolna: checksum = (sum buf[0..len-2]) & 0xFF == buf[len-1] */
-static uint8_t tfluna_checksum_ok(const uint8_t *buf, uint8_t len)
+/* ───────────── Pomocnicze: zaokrąglenie do 0.1°C ───────────── */
+static float round_01(float v)
 {
-    if (!buf || len < 2u) {
-        return 0u;
-    }
-    uint16_t s = 0;
-    for (uint8_t i = 0; i < (uint8_t)(len - 1u); ++i) {
-        s += buf[i];
-    }
-    return ((s & 0xFFu) == buf[len - 1u]) ? 1u : 0u;
+    /* Dodaj 0.5 lub −0.5 w skali 0.1 i rzutuj na int → szybkie zaokrąglenie */
+    int s = (v >= 0.0f) ? +1 : -1;
+    int t = (int)(v * 10.0f + s * 0.5f);
+    return (float)t / 10.0f;
 }
 
-/* Heurystyka temperatury (jak w Twoim pliku):
-   próbujemy (raw/8 - 256) oraz (raw/10.0), wybieramy sensowniejszą. */
-static float tfluna_decode_tempC(int16_t raw, float last_good)
-{
-    float t1 = (raw / 8.0f) - 256.0f; /* klasyczne */
-    float t2 = (float)raw / 10.0f;    /* „dziesiąte °C” – spotykane w rewizjach I2C */
-
-    uint8_t ok1 = (t1 > -50.0f && t1 < 100.0f);
-    uint8_t ok2 = (t2 > -50.0f && t2 < 100.0f);
-
-    float chosen;
-    if (ok1 && ok2) {
-        if (last_good == 0.0f) {
-            chosen = (t1 > -30.0f && t1 < 80.0f) ? t1 : t2;
-        } else {
-            chosen = (absf_fast(t1 - last_good) < absf_fast(t2 - last_good)) ? t1 : t2;
-        }
-    } else if (ok1) {
-        chosen = t1;
-    } else if (ok2) {
-        chosen = t2;
-    } else {
-        chosen = (last_good == 0.0f) ? 25.0f : last_good;
-    }
-
-    /* skala z config (u Ciebie powinna być 1.0f) */
-    chosen *= CFG_Luna()->temp_scale;
-
-    /* clamp do granic pracy modułu */
-    if (chosen < -30.0f) {
-        chosen = -30.0f;
-    }
-    if (chosen > 85.0f) {
-        chosen = 85.0f;
-    }
-    return chosen;
-}
-
-/* median z N (N<=WIN_MAX). Kopiuje lokalnie i sortuje prostym wstawianiem. */
+/* ───────────── Proste MED/MA (bez <math.h>) ───────────── */
 static uint16_t median_u16(const uint16_t *arr, uint8_t n)
 {
-    uint16_t tmp[WIN_MAX];
-    for (uint8_t i = 0; i < n; ++i) {
-        tmp[i] = arr[i];
-    }
-    for (uint8_t i = 1; i < n; ++i) {
+    uint16_t tmp[WIN_MAX];                   /* lokalna kopia do sortowania           */
+    for (uint8_t i = 0; i < n; ++i) tmp[i] = arr[i];
+    for (uint8_t i = 1; i < n; ++i) {        /* sortowanie wstawieniowe               */
         uint16_t key = tmp[i];
         int j = (int)i - 1;
-        while (j >= 0 && tmp[j] > key) {
-            tmp[j + 1] = tmp[j];
-            j--;
-        }
+        while (j >= 0 && tmp[j] > key) { tmp[j + 1] = tmp[j]; j--; }
         tmp[j + 1] = key;
     }
-    return tmp[n / 2];
+    return tmp[n / 2];                       /* element środkowy                      */
 }
 
 static uint16_t mean_u16(const uint16_t *arr, uint8_t n)
 {
     uint32_t s = 0;
-    for (uint8_t i = 0; i < n; ++i) {
-        s += arr[i];
-    }
-    return (uint16_t)(s / (uint32_t)n);
+    for (uint8_t i = 0; i < n; ++i) s += arr[i];
+    return (uint16_t)(s / (uint32_t)n);      /* średnia całkowitoliczbowa             */
 }
 
-/* aktualizacja filtrów; MED/MA – okna z config, ale CLAMP do 1..WIN_MAX */
+/* ───────────── Aktualizacja filtrów wg okien z config.c ─────────────
+ *  MED: wymuszamy okno nieparzyste; oba okna CLAMP do 1..WIN_MAX (1..5).
+ */
 static void filt_update_cfg(tfluna_filt_t *f, uint16_t dist, uint16_t str,
                             uint16_t *out_med, uint16_t *out_ma)
 {
-    const ConfigLuna_t *L = CFG_Luna();
+    const ConfigLuna_t *L = CFG_Luna();      /* pobierz okna filtrów                   */
 
-    uint8_t wmed = L->median_win;
-    if (wmed < 1u) { wmed = 1u; }
-    if (wmed > WIN_MAX) { wmed = WIN_MAX; }
-    if ((wmed & 1u) == 0u) { wmed--; } /* MED = okno nieparzyste */
+    uint8_t wmed = L->median_win;            /* okno mediany                           */
+    if (wmed < 1u) wmed = 1u;
+    if (wmed > WIN_MAX) wmed = WIN_MAX;
+    if ((wmed & 1u) == 0u) wmed--;           /* mediana wymaga okna nieparzystego      */
 
-    uint8_t wma = L->ma_win;
-    if (wma < 1u) { wma = 1u; }
-    if (wma > WIN_MAX) { wma = WIN_MAX; }
+    uint8_t wma = L->ma_win;                 /* okno średniej kroczącej                */
+    if (wma < 1u) wma = 1u;
+    if (wma > WIN_MAX) wma = WIN_MAX;
 
-    /* wpis do buforów pierścieniowych */
-    f->dist_hist[f->idx] = dist;
+    f->dist_hist[f->idx] = dist;             /* wpisz nowe wartości do buforów         */
     f->str_hist [f->idx] = str;
 
-    if (f->count < WIN_MAX) {
-        f->count++;
-    }
-    f->idx = (uint8_t)((f->idx + 1u) % WIN_MAX);
+    if (f->count < WIN_MAX) f->count++;      /* zwiększ licznik do maks. okna          */
+    f->idx = (uint8_t)((f->idx + 1u) % WIN_MAX); /* pierścieniowo                      */
 
-    /* realna liczba elementów (gdy na starcie bufor niepełny) */
-    uint8_t nmed = (f->count < wmed) ? f->count : wmed;
+    uint8_t nmed = (f->count < wmed) ? f->count : wmed; /* realna liczba próbek */
     uint8_t nma  = (f->count < wma ) ? f->count : wma;
 
-    uint16_t med = median_u16(f->dist_hist, nmed);
-    uint16_t ma  = mean_u16  (f->str_hist,  nma );
+    uint16_t med = median_u16(f->dist_hist, nmed);      /* policz medianę       */
+    uint16_t ma  = mean_u16  (f->str_hist,  nma );      /* policz średnią       */
 
-    f->last_med = med;
+    f->last_med = med;                        /* zachowaj ostatnie wartości filtrów     */
     f->last_ma  = ma;
 
-    if (out_med) { *out_med = med; }
-    if (out_ma)  { *out_ma  = ma;  }
+    if (out_med) *out_med = med;              /* oddaj wynik do struktury wyjściowej    */
+    if (out_ma)  *out_ma  = ma;
 }
 
-/* Odczyt rejestrami: Dist L/H od 0x00, Str L/H 0x02/0x03, Temp L/H 0x04/0x05 */
-static uint8_t tfluna_read_regs(I2C_HandleTypeDef *hi2c, TF_LunaData_t *out, tfluna_filt_t *fs)
+/* ───────────── Odczyt rejestrowy 0x00..0x05 (1 próba) ───────────── */
+static uint8_t tfluna_read_regs_once(I2C_HandleTypeDef *hi2c, TF_LunaData_t *out, tfluna_filt_t *fs)
 {
-    if (!hi2c || !out || !fs) {
-        return 0u;
-    }
+    if (!hi2c || !out || !fs) return 0u;     /* zabezpieczenie argumentów              */
 
-    uint8_t reg = 0x00u;
-    uint8_t data[6] = {0};
+    uint8_t reg  = 0x00u;                    /* start od 0x00                          */
+    uint8_t data[6] = {0};                   /* 0..5: D_L,D_H,A_L,A_H,T_L,T_H          */
 
-    if (HAL_I2C_Master_Transmit(hi2c, TFLUNA_ADDR, &reg, 1, TFLUNA_I2C_TIMEOUT_TX) != HAL_OK) {
-        return 0u;
-    }
-    if (HAL_I2C_Master_Receive(hi2c, TFLUNA_ADDR, data, sizeof(data), TFLUNA_I2C_TIMEOUT_RX) != HAL_OK) {
-        return 0u;
-    }
+    if (HAL_I2C_Master_Transmit(hi2c, TFLUNA_ADDR, &reg, 1, TFLUNA_TO_TX) != HAL_OK) return 0u;
+    if (HAL_I2C_Master_Receive (hi2c, TFLUNA_ADDR, data, sizeof(data), TFLUNA_TO_RX) != HAL_OK) return 0u;
 
-    uint16_t dist     = (uint16_t)(data[0] | (data[1] << 8));
-    uint16_t strength = (uint16_t)(data[2] | (data[3] << 8));
-    int16_t  traw     = (int16_t)(data[4] | (data[5] << 8));
+    /* Złóż słowa 16-bit z par bajtów (LOW|HIGH<<8) */
+    uint16_t dist     = (uint16_t)(data[0] | (data[1] << 8));  /* dystans [cm]  */
+    uint16_t strength = (uint16_t)(data[2] | (data[3] << 8));  /* siła   [raw]  */
+    int16_t  traw     = (int16_t)(data[4] | (data[5] << 8));   /* temp [0.01°C] */
 
+    /* Temperatura I²C: setne °C → °C */
+    float tC = (float)traw / 100.0f;                           /* np. 2500→25.00 */
+
+    /* Skala i ograniczenie zakresu (opcjonalna kalibracja) */
+    tC *= CFG_Luna()->temp_scale;                               /* mnożnik z config */
+    if (tC < -40.0f) tC = -40.0f;                               /* clamp bez „logiki” */
+    if (tC > 125.0f) tC = 125.0f;
+
+    /* Wpisz surowe do wyjścia */
     out->distance    = dist;
     out->strength    = strength;
-    out->temperature = tfluna_decode_tempC(traw, fs->last_tempC);
-    fs->last_tempC   = out->temperature;
+    out->temperature = round_01(tC);                            /* 0.1°C bez <math.h> */
 
-    /* filtry z oknami z config */
+    /* Zaktualizuj filtry i wyprowadź ich wynik */
     filt_update_cfg(fs, dist, strength, &out->distance_filt, &out->strength_filt);
 
-    out->frameReady  = 1u;
+    /* Zapamiętaj ostatnią dobrą temp. do ewentualnego fallbacku */
+    fs->last_tempC   = out->temperature;
+
+    out->frameReady  = 1u;                                      /* mamy nową ramkę  */
     return 1u;
 }
 
-/* Odczyt „burst” 9 bajtów – [0]=0x59 [1]=0x59 [2..7]=payload [8]=sum */
-static uint8_t tfluna_read_burst(I2C_HandleTypeDef *hi2c, TF_LunaData_t *out, tfluna_filt_t *fs)
-{
-    if (!hi2c || !out || !fs) {
-        return 0u;
-    }
-
-    uint8_t reg0 = 0x00u;
-    uint8_t buf[9] = {0};
-
-    if (HAL_I2C_Master_Transmit(hi2c, TFLUNA_ADDR, &reg0, 1, TFLUNA_I2C_TIMEOUT_TX) != HAL_OK) {
-        return 0u;
-    }
-    if (HAL_I2C_Master_Receive(hi2c, TFLUNA_ADDR, buf, sizeof(buf), TFLUNA_I2C_TIMEOUT_RX) != HAL_OK) {
-        return 0u;
-    }
-
-    /* nagłówek + checksum */
-    if (!(buf[0] == 0x59u && buf[1] == 0x59u)) {
-        return 0u;
-    }
-    if (!tfluna_checksum_ok(buf, 9)) {
-        return 0u;
-    }
-
-    uint16_t dist     = (uint16_t)(buf[2] | (buf[3] << 8));
-    uint16_t strength = (uint16_t)(buf[4] | (buf[5] << 8));
-    int16_t  traw     = (int16_t)(buf[6] | (buf[7] << 8));
-
-    out->distance    = dist;
-    out->strength    = strength;
-    out->temperature = tfluna_decode_tempC(traw, fs->last_tempC);
-    fs->last_tempC   = out->temperature;
-
-    /* filtry z oknami z config */
-    filt_update_cfg(fs, dist, strength, &out->distance_filt, &out->strength_filt);
-
-    out->frameReady  = 1u;
-    return 1u;
-}
-
-/* Główny odczyt: burst → rejestry; kilka prób. Przy braku nowej ramki
-   zwracamy „ostatnie stabilne” (frameReady=0), żeby UI nie pokazywało „0”. */
+/* ───────────── Główny odczyt z kilkoma próbami ─────────────
+ *  Jeśli wszystkie próby padną, zwracamy ostatnie przefiltrowane
+ *  wartości i ostatnią temp. (frameReady=0), aby UI nie „skakało”.
+ */
 static TF_LunaData_t TF_Luna_Read_Generic(I2C_HandleTypeDef *hi2c, tfluna_filt_t *fs)
 {
-    TF_LunaData_t out;
-    memset(&out, 0, sizeof(out));
+    TF_LunaData_t out;                         /* lokalna struktura wynikowa           */
+    memset(&out, 0, sizeof(out));              /* wyzeruj przed użyciem                */
+    if (!hi2c || !fs) return out;              /* brak uchwytu → pusta ramka           */
 
-    if (!hi2c || !fs) {
-        return out;
+    for (uint8_t i = 0; i < TFLUNA_TRIES; ++i) {
+        if (tfluna_read_regs_once(hi2c, &out, fs)) return out;  /* sukces → zwróć  */
+        HAL_Delay(2);                                           /* krótka przerwa  */
     }
 
-    for (uint8_t attempt = 0; attempt < TFLUNA_READ_TRIES; ++attempt) {
-        if (tfluna_read_burst(hi2c, &out, fs)) {
-            return out;
-        }
-        if (tfluna_read_regs (hi2c, &out, fs)) {
-            return out;
-        }
-        HAL_Delay(2);
-    }
-
-    /* NO FRAME – użyj ostatnich filtrów + ostatniej temp */
+    /* FAIL: zwróć ostatnie stabilne filtry + ostatnią temp. */
     out.distance_filt = fs->last_med;
     out.strength_filt = fs->last_ma;
     out.temperature   = (fs->last_tempC == 0.0f) ? 25.0f : fs->last_tempC;
@@ -279,14 +175,24 @@ static TF_LunaData_t TF_Luna_Read_Generic(I2C_HandleTypeDef *hi2c, tfluna_filt_t
     return out;
 }
 
-/* Publiczne API – aliasy na „prawy/lewy” czujnik, + offsety z config */
+/* ───────────── Publiczne API: aliasy prawa/lewa + offsety z config ───────────── */
 TF_LunaData_t TF_Luna_Right_Read(void)
 {
     TF_LunaData_t d = TF_Luna_Read_Generic(luna_right, &filt_right);
-    /* offset po filtrze, żeby nie zniekształcać mediany/średniej */
+
+    /* BYŁO:
+       int32_t v = (int32_t)d.distance + (int32_t)CFG_Luna()->dist_offset_right_mm;
+       if (v < 0) v = 0; if (v > 65535) v = 65535;
+       d.distance = (uint16_t)v;
+    */
+
     int32_t v = (int32_t)d.distance + (int32_t)CFG_Luna()->dist_offset_right_mm;
-    if (v < 0) { v = 0; }
-    if (v > 65535) { v = 65535; }
+    if (v < 0) {
+        v = 0;
+    }
+    if (v > 65535) {
+        v = 65535;
+    }
     d.distance = (uint16_t)v;
     return d;
 }
@@ -294,9 +200,59 @@ TF_LunaData_t TF_Luna_Right_Read(void)
 TF_LunaData_t TF_Luna_Left_Read(void)
 {
     TF_LunaData_t d = TF_Luna_Read_Generic(luna_left, &filt_left);
+
+    /* BYŁO:
+       int32_t v = (int32_t)d.distance + (int32_t)CFG_Luna()->dist_offset_left_mm;
+       if (v < 0) v = 0; if (v > 65535) v = 65535;
+       d.distance = (uint16_t)v;
+    */
+
     int32_t v = (int32_t)d.distance + (int32_t)CFG_Luna()->dist_offset_left_mm;
-    if (v < 0) { v = 0; }
-    if (v > 65535) { v = 65535; }
+    if (v < 0) {
+        v = 0;
+    }
+    if (v > 65535) {
+        v = 65535;
+    }
     d.distance = (uint16_t)v;
     return d;
+}
+
+/* ============================================================================
+ *  TF_Luna_AmbientEstimateC
+ *  ----------------------------------------------------------------------------
+ *  CO:
+ *    • Szacuje temperaturę otoczenia na bazie temp. układu (d->temperature)
+ *      oraz stałej korekty z config: CFG_Luna()->temp_offset_c (np. −15.0 °C).
+ *
+ *  PO CO:
+ *    • Temp. układu jest zwykle wyższa od ambientu (samonagrzewanie). Offset
+ *      pozwala wyświetlać „Ambient (est.)” blisko rzeczywistości.
+ *
+ *  UWAGI:
+ *    • Wynik zaokrąglamy do 0.1 °C, zakres obcinamy do −40..125 °C.
+ * ============================================================================
+ */
+float TF_Luna_AmbientEstimateC(const TF_LunaData_t *d)
+{
+    /* brak danych → zwróć 0.0 (bezpieczna wartość domyślna) */
+    if (d == NULL) {
+        return 0.0f;
+    }
+
+    /* zsumuj temp. układu z offsetem kalibracyjnym z config */
+    float t = d->temperature + CFG_Luna()->temp_offset_c;
+
+    /* ogranicz do sensownego zakresu pracy czujnika */
+    if (t < -40.0f) {
+        t = -40.0f;
+    }
+    if (t > 125.0f) {
+        t = 125.0f;
+    }
+
+    /* Zaokrąglenie do 0.1°C bez <math.h> (unikanie warningów → klamry) */
+    int sign   = (t >= 0.0f) ? +1 : -1;            /* znak liczby (do poprawnego zaokr.) */
+    int tenths = (int)(t * 10.0f + sign * 0.5f);   /* zaokrągl do najbliższej 0.1        */
+    return (float)tenths / 10.0f;                  /* wynik w °C z dokładnością 0.1      */
 }

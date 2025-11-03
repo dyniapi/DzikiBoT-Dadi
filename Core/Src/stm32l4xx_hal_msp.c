@@ -1,15 +1,3 @@
-/**
- * @file    stm32l4xx_hal_msp.c
- * @brief   Moduł projektu DzikiBoT.
- * @date    2025-11-02
- *
- * Uwaga:
- *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
- *
- * Funkcje w pliku (skrót):
- *   - HAL_MspInit(void)
- */
-
 /* USER CODE BEGIN Header */
 
 /* USER CODE END Header */

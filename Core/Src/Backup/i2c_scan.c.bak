@@ -1,8 +1,17 @@
 /**
- ******************************************************************************
  * @file    i2c_scan.c
- * @brief   Implementacja skanera magistral I2C (Right = I2C1, Left = I2C3)
- ******************************************************************************
+ * @brief   Skanowanie urządzeń na I²C do weryfikacji podłączeń.
+ * @date    2025-11-02
+ *
+ * Uwaga:
+ *   Zachowaj spójność z resztą modułów oraz konwencje projektu.
+ *
+ * Funkcje w pliku (skrót):
+ *   - I2C_Scan_Bus(const char* busName,
+                     I2C_HandleTypeDef* hi2c,
+                     uint8_t start7b, uint8_t end7b,
+                     uint8_t trials, uint32_t timeout)
+ *   - I2C_Scan_All(void)
  */
 
 #include "i2c_scan.h"
