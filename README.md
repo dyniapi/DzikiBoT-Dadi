@@ -1,5 +1,5 @@
 
-# DzikiBoT — README (pełny i aktualny)
+# DzikiBoT 
 
 > **Platforma:** STM32 Nucleo‑L432KC  
 > **Cel:** Robot mini‑sumo — napęd 2× BLDC (ESC), czujniki TF‑Luna (Lidar) i TCS3472 (kolor), OLED SSD1306, panel diagnostyczny UART.  
@@ -204,3 +204,32 @@ Skrót do strojenia:
 - **Zapas prądowy** źródła zasilania dla ESC (szczytowe pobory).
 
 ---
+<<<<<<< Updated upstream
+=======
+
+## Licencja / Autorzy
+
+- Kod modułów był rozwijany wspólnie w sesjach z asystentem (ChatGPT) i użytkownikiem.  
+- Brak sformalizowanej licencji — do użytku własnego w projekcie DzikiBoT. Jeżeli planujesz publikację, rozważ dodanie pliku `LICENSE`.
+
+---
+
+### Załącznik A — sekwencja inicjalizacji (fragment `main.c`)
+
+```c
+ESC_Init(&htim1);
+ESC_ArmNeutral(3000);                 // 3 s neutral (arming)
+Throttle_Init(&THROTTLE_DEFAULTS);    // krzywa/trim
+TankDrive_Init(&TANKDRIVE_DEFAULT_CFG);
+```
+
+### Załącznik B — pętla (fragment `main.c`)
+
+```c
+if ((now - tTank) >= CFG_Motors()->tick_ms) {
+    TankDrive_Update();
+    DriveTest_Tick();   // opcjonalny test krokowy
+    tTank = now;
+}
+```
+>>>>>>> Stashed changes

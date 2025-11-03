@@ -6,14 +6,6 @@
  * Uwaga:
  *   Trzymaj main.c minimalny — logika w modułach. Dbaj o rytm zadań okresowych.
  *
- * Funkcje w pliku (skrót):
- *   - __io_putchar(int ch)
- *   - main(void)
- *   - SystemClock_Config(void)
- *   - App_Init(void)
- *   - App_Tick(void)
- *   - Error_Handler(void)
- *   - assert_failed(uint8_t *file, uint32_t line)
  */
 
 /* USER CODE BEGIN Header */
@@ -56,12 +48,12 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-/* Okresy zadań (ms) */
-#define PERIOD_TANK_MS     20U   /* obecnie i tak bierzemy z CFG_Motors() */
+/* Okresy zadań (ms) obecnie i tak bierzemy z CFG_Motors()
+#define PERIOD_TANK_MS     20U
 #define PERIOD_SENS_MS    100U
 #define PERIOD_OLED_MS    200U
 #define PERIOD_UART_MS    200U
-
+ */
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
