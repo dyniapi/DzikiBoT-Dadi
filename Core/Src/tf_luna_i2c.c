@@ -16,7 +16,7 @@
 #include "tf_luna_i2c.h"     // API i typy modułu
 #include "config.h"          // CFG_Luna(): median_win, ma_win, temp_scale, temp_offset_c
 #include <string.h>          // memset
-#include "stm32l4xx_hal.h"   // HAL I2C API
+#include "stm32l4xx_hal.h"   // HAL I2C, HAL_Delay (krótka przerwa między próbami)
 
 /* ───────────── Adres i time-outy I²C ───────────── */
 #define TFLUNA_ADDR            (0x10u << 1)   /* 7-bit 0x10 → 8-bit dla HAL */
@@ -42,8 +42,6 @@ typedef struct {
     float    last_tempC;          /* ostatnia dobra temperatura (°C)            */
     uint16_t last_med;            /* ostatnia mediana dystansu (cm)             */
     uint16_t last_ma;             /* ostatnia średnia siły (raw)                */
-    uint16_t last_raw_dist;       /* ostatnia poprawna wartość DIST (cm)        */
-    uint16_t last_raw_strength;   /* ostatnia poprawna wartość STRENGTH (raw)   */
 } tfluna_filt_t;
 
 static tfluna_filt_t filt_right = {0};  /* stan filtrów: prawy czujnik */
@@ -147,10 +145,8 @@ static uint8_t tfluna_read_regs_once(I2C_HandleTypeDef *hi2c, TF_LunaData_t *out
     /* Zaktualizuj filtry i wyprowadź ich wynik */
     filt_update_cfg(fs, dist, strength, &out->distance_filt, &out->strength_filt);
 
-    /* Zapamiętaj ostatnie dobre wartości do ewentualnego fallbacku */
-    fs->last_tempC        = out->temperature;
-    fs->last_raw_dist     = dist;
-    fs->last_raw_strength = strength;
+    /* Zapamiętaj ostatnią dobrą temp. do ewentualnego fallbacku */
+    fs->last_tempC   = out->temperature;
 
     out->frameReady  = 1u;                                      /* mamy nową ramkę  */
     return 1u;
@@ -167,23 +163,14 @@ static TF_LunaData_t TF_Luna_Read_Generic(I2C_HandleTypeDef *hi2c, tfluna_filt_t
     if (!hi2c || !fs) return out;              /* brak uchwytu → pusta ramka           */
 
     for (uint8_t i = 0; i < TFLUNA_TRIES; ++i) {
-        if (tfluna_read_regs_once(hi2c, &out, fs)) {
-            return out;                                        /* sukces → zwróć  */
-        }
-        /* bez dodatkowego wstrzymania — opuść pętlę, spróbujemy w kolejnym takcie */
-        break;
+        if (tfluna_read_regs_once(hi2c, &out, fs)) return out;  /* sukces → zwróć  */
+        HAL_Delay(2);                                           /* krótka przerwa  */
     }
 
-    /* FAIL: zwróć ostatnie stabilne dane + ostatnią temp. */
-    if (fs->count > 0u) {
-        out.distance        = fs->last_raw_dist;
-        out.strength        = fs->last_raw_strength;
-        out.distance_filt   = fs->last_med;
-        out.strength_filt   = fs->last_ma;
-        out.temperature     = (fs->last_tempC == 0.0f) ? 25.0f : fs->last_tempC;
-    } else {
-        out.temperature     = 25.0f;
-    }
+    /* FAIL: zwróć ostatnie stabilne filtry + ostatnią temp. */
+    out.distance_filt = fs->last_med;
+    out.strength_filt = fs->last_ma;
+    out.temperature   = (fs->last_tempC == 0.0f) ? 25.0f : fs->last_tempC;
     out.frameReady    = 0u;
     return out;
 }
