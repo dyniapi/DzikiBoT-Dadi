@@ -195,24 +195,6 @@ Skrót do strojenia:
 
 ---
 
-## Rozwiązywanie problemów
-
-**Błąd linkera:** `undefined reference to 'TANKDRIVE_DEFAULT_CFG'`  
-→ Upewnij się, że korzystasz z aktualnego `tank_drive.c/.h` (stała jest zdefiniowana i zadeklarowana).
-
-**`expected expression before 'static'` lub `expected ';' before 'void'`**  
-→ Najczęściej wklejony kod z urwanym nawiasem/średnikiem. Zrób `Clean Project` i porównaj z plikami z tego README.
-
-**`undefined reference to 'ESC_SetRightPercent' / 'ESC_SetLeftPercent'`**  
-→ Dodaj/skomiluj `motor_bldc.c` albo sprawdź, czy plik jest włączony do budowania (Makefile / STM32CubeIDE).
-
-**Silniki ledwie ruszają na +10**  
-→ Zwiększ `esc_start_pct` (np. do 30–35) i sprawdź okablowanie/arming ESC. Ustal, czy ESC mają bidirectional i właściwe „center”.
-
-**Drgania / nierówne obroty**  
-→ Zwiększ `neutral_dwell_ms` i `ramp_step_pct` oraz upewnij się, że zasilanie ESC jest stabilne (spadki napięcia!).
-
----
 
 ## Bezpieczeństwo
 
@@ -222,33 +204,3 @@ Skrót do strojenia:
 - **Zapas prądowy** źródła zasilania dla ESC (szczytowe pobory).
 
 ---
-
-## Licencja / Autorzy
-
-- Kod modułów był rozwijany wspólnie w sesjach z asystentem (ChatGPT) i użytkownikiem.  
-- Brak sformalizowanej licencji — do użytku własnego w projekcie DzikiBoT. Jeżeli planujesz publikację, rozważ dodanie pliku `LICENSE`.
-
----
-
-### Załącznik A — sekwencja inicjalizacji (fragment `main.c`)
-
-```c
-ESC_Init(&htim1);
-ESC_ArmNeutral(3000);                 // 3 s neutral (arming)
-Throttle_Init(&THROTTLE_DEFAULTS);    // krzywa/trim
-TankDrive_Init(&TANKDRIVE_DEFAULT_CFG);
-```
-
-### Załącznik B — pętla (fragment `main.c`)
-
-```c
-if ((now - tTank) >= CFG_Motors()->tick_ms) {
-    TankDrive_Update();
-    DriveTest_Tick();   // opcjonalny test krokowy
-    tTank = now;
-}
-```
-
----
-
-**Kontakt / wsparcie:** dopisz issues/todo w tym README, a następnie podlinkuj fragmenty kodu, które wymagają zmiany. W projekcie trzymamy konwencję: `main.c` minimalny, peryferia i logika w osobnych plikach.
