@@ -113,13 +113,13 @@
  */
 static const ConfigMotors_t g_motors = {
     .tick_ms               = 20,     // [ms] rytm Tank_Update; 20 → 50 Hz (responsywne, stabilne)
-    .neutral_dwell_ms      = 600,    // [ms] czas neutralu przy zmianie kierunku (reverse-gate)
-    .ramp_step_pct         = 4,      // [%/tick] krok rampy (większe → żwawiej, mniejsze → łagodniej)
-    .reverse_threshold_pct = 3,      // [%] „bramka” zmiany kierunku (eliminuje oscylacje przy 0%)
+    .neutral_dwell_ms      = 100,    // [ms] czas neutralu przy zmianie kierunku (reverse-gate)
+    .ramp_step_pct         = 6,      // [%/tick] krok rampy (większe → żwawiej, mniejsze → łagodniej)
+    .reverse_threshold_pct = 2,      // [%] „bramka” zmiany kierunku (eliminuje oscylacje przy 0%)
     .smooth_alpha          = 0.25f,  // [0..1] wygładzanie EMA; 0.25 = umiarkowane filtrowanie
     .left_scale            = 1.00f,  // [×] korekta lewego toru (1.00 = brak korekty)
     .right_scale           = 1.00f,  // [×] korekta prawego toru (1.00 = brak korekty)
-    .esc_start_pct         = 30,     // [%] dolna granica okna ESC (wyjście z martwej strefy)
+    .esc_start_pct         = 20,     // [%] dolna granica okna ESC (wyjście z martwej strefy)
     .esc_max_pct           = 60,     // [%] górna granica „naszego” 100% (łatwiejsza kontrola)
 };
 
