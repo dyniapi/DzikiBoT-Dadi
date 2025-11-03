@@ -232,4 +232,7 @@ if ((now - tTank) >= CFG_Motors()->tick_ms) {
     tTank = now;
 }
 ```
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
 >>>>>>> Stashed changes
