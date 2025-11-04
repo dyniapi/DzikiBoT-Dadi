@@ -7,8 +7,6 @@
  *   - Brak użycia HAL_MAX_DELAY, brak blokowania pętli głównej.
  *   - HAL_UART_Transmit_IT + wewnętrzny bufor kołowy TX (ring buffer).
  *   - Kompatybilne API z Twoim core.zip (Init/Print/Printf/SensorsDual).
- *   - Włączone NVIC dla USART2 (lub używanego UARTu).
- *   - W stm32l4xx_it.c: USARTx_IRQHandler wywołuje HAL_UART_IRQHandler(&huartx).
  *   - (NOWE) Nagłówek: "DzikiBoT (Sensors)   UART dropped=X" — X odświeżany co 2 s.
  */
 
