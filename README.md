@@ -2,7 +2,7 @@
 # DzikiBoT 
 
 > **Platforma:** STM32 Nucleo‑L432KC  
-> **Cel:** Robot mini‑sumo — napęd 2× BLDC (ESC), czujniki TF‑Luna (Lidar) i TCS3472 (kolor), OLED SSD1306, panel diagnostyczny UART.  
+> **Cel:** Robot - napęd 2× BLDC (ESC), czujniki TF‑Luna (Lidar) i TCS3472 (kolor), OLED SSD1306, panel diagnostyczny UART.  
 > **Styl projektu:** `main.c` minimalny, cała obsługa peryferiów i logiki w oddzielnych modułach.
 
 ---
