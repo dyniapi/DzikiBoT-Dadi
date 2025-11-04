@@ -1,211 +1,182 @@
 /*
  * ============================================================================
- *  MODULE: app  —  warstwa aplikacyjna (inicjalizacja systemu + harmonogram)
- *  ----------------------------------------------------------------------------
+ *  MODULE: app — warstwa aplikacyjna (inicjalizacja + harmonogram)
+ * -----------------------------------------------------------------------------
  *  CO:
- *    - App_Init()  : jednorazowy start systemu (inicjalizacja peryferiów i modułów, ARM ESC).
- *    - App_Tick()  : nieblokująca pętla zadań cyklicznych (napęd, sensory, OLED, UART).
+ *    - App_Init(): inicjalizacja peryferiów/modułów + arming ESC.
+ *    - App_Tick(): nieblokująca pętla zadań (napęd, sensory, OLED, UART).
  *
- *  PO CO:
- *    - Oddzielenie logiki „co i kiedy” od main.c, który pozostaje minimalny.
- *    - Jedno miejsce sterujące rytmem całej aplikacji (łatwe strojenie i debug).
- *
- *  KIEDY:
- *    - App_Init()  wołane raz po starcie (po HAL initach z CubeMX).
- *    - App_Tick()  wołane w każdej iteracji while(1) — bez opóźnień blokujących.
- *
- *  USTALENIA:
- *    - Nazwy funkcji, struktur i zmiennych — BEZ ZMIAN (spójne z projektem).
- *    - Interwały PERIOD_* pobierane z config.c przez CFG_Scheduler(), ale zachowujemy
- *      stare nazwy PERIOD_SENS_MS / PERIOD_OLED_MS / PERIOD_UART_MS.
- *    - Napęd: TIM1 CH1=PA8 (Right), CH4=PA11 (Left). ARM ESC: 3000 ms neutralu na starcie.
- *
- *  UWAGI DOT. BEZPIECZEŃSTWA:
- *    - Brak HAL_Delay w App_Tick() — wszystko nieblokujące.
- *    - Jedyny HAL_Delay jest w ESC_ArmNeutral(3000) w App_Init() — wymaganie ESC.
+ *  ZAŁOŻENIA:
+ *    - main.c minimalny: wywołuje tylko App_Init/App_Tick.
+ *    - Brak HAL_Delay w App_Tick; jedyny HAL_Delay to ESC_ArmNeutral(3000).
+ *    - TIM1: CH1=PA8 (Right), CH4=PA11 (Left).
+ *    - Interwały PERIOD_* z config.c (utrzymujemy stare nazwy makr).
+ *    - Odczyty sensorów rozfazowane Right⇄Left (mniejsze szczyty na I²C).
+ *    - Jitter Tank mierzony i drukowany „po UART” w takcie panelu.
  * ============================================================================
  */
 
-#include "app.h"              // prototypy App_Init/App_Tick
-#include "config.h"           // CFG_Scheduler(), CFG_Motors() — okresy i rytm napędu
-
-/* HAL i peryferia z projektu */
-#include "stm32l4xx_hal.h"    // HAL_GetTick()
-#include "i2c.h"              // hi2c1, hi2c3
-#include "usart.h"            // huart2
-#include "tim.h"              // htim1
-
-/* Moduły projektu (nazwy z Twojego baseline) */
-#include "tf_luna_i2c.h"      // TF_Luna_*()
-#include "tcs3472.h"          // TCS3472_*()
-#include "ssd1306.h"          // SSD1306_Init()
-#include "oled_panel.h"       // OLED_Panel_ShowSensors(...)
-#include "debug_uart.h"       // DebugUART_*()
-#include "i2c_scan.h"         // I2C_Scan_All()
-#include "motor_bldc.h"       // ESC_Init(), ESC_ArmNeutral()
-#include "tank_drive.h"       // Tank_Init(), Tank_Update()
-#include "drive_test.h"       // DriveTest_Start(), DriveTest_Tick()
-
+#include "app.h"
+#include "config.h"
+#include "stm32l4xx_hal.h"
+#include "i2c.h"
+#include "usart.h"
+#include "tim.h"
+#include "tf_luna_i2c.h"
+#include "tcs3472.h"
+#include "ssd1306.h"
+#include "oled_panel.h"
+#include "debug_uart.h"
+#include "i2c_scan.h"
+#include "motor_bldc.h"
+#include "tank_drive.h"
+#include "drive_test.h"
 #include <stdbool.h>
 
-/* ========================================================================== */
-/*  Interwały zadań — UTRZYMUJEMY STARE NAZWY MAKRO, ale źródłem jest config. */
-/*  Dzięki temu nie dotykamy reszty kodu, a wartości stroimy w config.c.      */
-/*  Uwaga: period == 0 oznacza „zawsze” (wykonywane co iterację).              */
-/* ========================================================================== */
+/* Okresy (źródło: config.c) */
 #ifndef PERIOD_SENS_MS
-#  define PERIOD_SENS_MS  (CFG_Scheduler()->sens_ms)   // odczyt sensorów (TF-Luna/TCS)
+#  define PERIOD_SENS_MS  (CFG_Scheduler()->sens_ms)
 #endif
 #ifndef PERIOD_OLED_MS
-#  define PERIOD_OLED_MS  (CFG_Scheduler()->oled_ms)   // odświeżanie OLED
+#  define PERIOD_OLED_MS  (CFG_Scheduler()->oled_ms)
 #endif
 #ifndef PERIOD_UART_MS
-#  define PERIOD_UART_MS  (CFG_Scheduler()->uart_ms)   // odświeżanie panelu UART
+#  define PERIOD_UART_MS  (CFG_Scheduler()->uart_ms)
 #endif
 
-/* ============================================================================
- *  Stan lokalny modułu app (wyłącznie dla App_Init/App_Tick)
- *  (Trzymamy tu tylko to, co potrzebne do rytmu zadań.)
- * ============================================================================
- */
+/* Bufory danych sensorów */
+static TF_LunaData_t   g_RightLuna = {0};
+static TF_LunaData_t   g_LeftLuna  = {0};
+static TCS3472_Data_t  g_RightColor= {0};
+static TCS3472_Data_t  g_LeftColor = {0};
 
-/* Bufory danych sensorów — tak jak było w Twoim main.c */
-static TF_LunaData_t   g_RightLuna = {0};   // TF-Luna (Right, I2C1)
-static TF_LunaData_t   g_LeftLuna  = {0};   // TF-Luna (Left,  I2C3)
-static TCS3472_Data_t  g_RightColor= {0};   // TCS3472 (Right, I2C1)
-static TCS3472_Data_t  g_LeftColor = {0};   // TCS3472 (Left,  I2C3)
+/* Cache konfiguracji */
+static const ConfigMotors_t    *g_MotorsCfg = NULL;
+static const ConfigScheduler_t *g_SchedCfg  = NULL;
 
-static const ConfigMotors_t    *g_MotorsCfg = NULL;   // cache CFG_Motors() po App_Init
-static const ConfigScheduler_t *g_SchedCfg  = NULL;   // cache CFG_Scheduler() po App_Init
+/* Soft-timery */
+static uint32_t tTank = 0, tSens = 0, tOLED = 0, tUART = 0;
 
-/* Zegary soft-timerów (ms) — znaczniki ostatniego wykonania zadań */
-static uint32_t tTank = 0;  // rytm napędu wg CFG_Motors()->tick_ms (rampa, reverse-gate)
-static uint32_t tSens = 0;  // co PERIOD_SENS_MS — odczyty TF-Luna i TCS3472
-static uint32_t tOLED = 0;  // co PERIOD_OLED_MS — odświeżenie OLED
-static uint32_t tUART = 0;  // co PERIOD_UART_MS — odświeżenie panelu UART
+/* Rozfazowanie: 0=Right, 1=Left */
+static uint8_t  s_sensPhase = 0;
 
-/* --------------------------------------------------------------------------
- *  Narzędzia do harmonogramu:
- *   - App_TaskDue(): zwraca true, gdy minął okres zadania i uaktualnia znacznik,
- *                   przy czym „trzyma siatkę” czasu (bez dryfu przy spóźnieniach).
- *   - App_TaskPrime(): ustawia znacznik tak, aby pierwsze wywołanie poszło natychmiast.
- * -------------------------------------------------------------------------- */
-static inline bool App_TaskDue(uint32_t now, uint32_t *last_run_ms, uint32_t period_ms)
+/* Jitter Tank — zbierany między kolejnymi printami UART */
+static uint32_t s_lastTankExec = 0;
+static uint32_t s_jMin = 0xFFFFFFFF;
+static uint32_t s_jMax = 0;
+static uint64_t s_jSum = 0;
+static uint32_t s_jCnt = 0;
+
+/* Harmonogram: anti-drift (trzymamy fazę) */
+static inline bool App_TaskDue(uint32_t now, uint32_t *last, uint32_t period)
 {
-    if (period_ms == 0U) {                   // „0” = zawsze (uwaga na obciążenie CPU/I²C/OLED)
-        *last_run_ms = now;
-        return true;
-    }
-
-    const uint32_t elapsed = (uint32_t)(now - *last_run_ms);
-    if (elapsed >= period_ms) {
-        /* Anti-drift: przeskocz o wielokrotność okresu, aby utrzymać fazę.
-           Jeśli spóźnienie jest większe niż 2x period, nie gonimy wielu razy —
-           po prostu przestawiamy siatkę o największą wielokrotność mieszczącą się w elapsed. */
-        const uint32_t steps = (elapsed / period_ms);
-        *last_run_ms += period_ms * steps;
+    if (period == 0U) { *last = now; return true; }   // „zawsze”
+    const uint32_t elapsed = (uint32_t)(now - *last); // wrap-safe
+    if (elapsed >= period) {
+        *last += period * (elapsed / period);         // przeskok o wielokrotność
         return true;
     }
     return false;
 }
-
-static inline void App_TaskPrime(uint32_t now, uint32_t *last_run_ms, uint32_t period_ms)
+static inline void App_TaskPrime(uint32_t now, uint32_t *last, uint32_t period)
 {
-    if (period_ms == 0U) {
-        *last_run_ms = now;                  // „zawsze” — i tak poleci natychmiast
-    } else {
-        *last_run_ms = now - period_ms;      // unsigned wrap ⇒ pierwsza iteracja odpala natychmiast
-    }
+    *last = (period == 0U) ? now : (now - period);    // start „od razu”
 }
 
-/* ============================================================================
- *  App_Init() — jednorazowa inicjalizacja aplikacji (po initach Cube/HAL)
- * ============================================================================
- */
+/* ==== Init systemu i modułów ==== */
 void App_Init(void)
 {
-    /* 0) Cache konfiguracji — pobieramy raz (stałe struktury w config.c) */
-    g_MotorsCfg = CFG_Motors();
+    g_MotorsCfg = CFG_Motors();            // cache wskaźników
     g_SchedCfg  = CFG_Scheduler();
 
-    /* 1) UART + skan I2C — szybka diagnostyka, jak miałeś w baseline */
-    DebugUART_Init(&huart2);                           // ustaw printf/ANSI na UART2
+    DebugUART_Init(&huart2);
     DebugUART_Printf("\r\n=== DzikiBoT – start (clean) ===");
     DebugUART_Printf("UART ready @115200 8N1");
-    I2C_Scan_All();                                    // przeskanuj I2C1 i I2C3
+    I2C_Scan_All();                        // szybka diagnostyka I²C
 
-    /* 2) Sensory + OLED — inicjalizacja obu TF-Luna i obu TCS3472, a następnie OLED */
-    TF_Luna_Right_Init(&hi2c1);                        // Right (I2C1)
-    TF_Luna_Left_Init (&hi2c3);                        // Left  (I2C3)
-    TCS3472_Right_Init(&hi2c1);                        // Right (I2C1)
-    TCS3472_Left_Init (&hi2c3);                        // Left  (I2C3)
+    TF_Luna_Right_Init(&hi2c1);            // Right (I2C1)
+    TF_Luna_Left_Init (&hi2c3);            // Left  (I2C3)
+    TCS3472_Right_Init(&hi2c1);            // Right (I2C1)
+    TCS3472_Left_Init (&hi2c3);            // Left  (I2C3)
 
-    SSD1306_Init();                                    // uruchom wyświetlacz
+    SSD1306_Init();
     DebugUART_Printf("SSD1306 init OK.");
 
-    /* 3) ESC + TankDrive — zgodnie z Twoją kolejnością */
-    ESC_Init(&htim1);                                  // kanały: CH1=PA8 (Right), CH4=PA11 (Left)
-    ESC_ArmNeutral(3000);                              // ~3 s neutralu na starcie (arming ESC)
-    Tank_Init(&htim1);                                 // spięcie logiki napędu z wyjściem PWM
+    ESC_Init(&htim1);                      // TIM1: CH1=PA8 (Right), CH4=PA11 (Left)
+    ESC_ArmNeutral(3000);                  // wymaganie ESC (neutral ~3 s)
+    Tank_Init(&htim1);                     // rampa + mapowanie %→µs
 
-    /* 4) Start testu jazdy (nieblokujący) */
-    DriveTest_Start();
+    DriveTest_Start();                     // nieblokujący test jazdy
 
-    /* 5) Pierwsze odczyty sensorów — żeby OLED/UART miały realne dane od razu */
+    /* pierwsze dane do OLED/UART „na start” */
     g_RightLuna  = TF_Luna_Right_Read();
     g_LeftLuna   = TF_Luna_Left_Read();
     g_RightColor = TCS3472_Right_Read();
     g_LeftColor  = TCS3472_Left_Read();
 
-    /* 6) Prime soft-timerów — aby pierwsza iteracja poszła „od razu” */
+    /* prime soft-timerów */
     const uint32_t now = HAL_GetTick();
     App_TaskPrime(now, &tTank, g_MotorsCfg->tick_ms);
     App_TaskPrime(now, &tSens, g_SchedCfg->sens_ms);
     App_TaskPrime(now, &tOLED, g_SchedCfg->oled_ms);
     App_TaskPrime(now, &tUART, g_SchedCfg->uart_ms);
+
+    /* reset zmiennych pomocniczych */
+    s_sensPhase    = 0u;
+    s_lastTankExec = 0u; s_jMin = 0xFFFFFFFFu; s_jMax = 0u; s_jSum = 0u; s_jCnt = 0u;
 }
 
-/* ============================================================================
- *  App_Tick() — nieblokująca pętla zadań cyklicznych (wołana w każdej iteracji while(1))
- * ============================================================================
- */
+/* ==== Pętla zadań (nieblokująca) ==== */
 void App_Tick(void)
 {
-    /* Pobieramy aktualny czas w ms (różnicowanie now - tX bezpieczne przy overflow) */
     const uint32_t now = HAL_GetTick();
+    if (!g_MotorsCfg || !g_SchedCfg) return; // guard
 
-    /* Jeśli App_Init() nie zdążyło zainicjalizować cache konfiguracji — nic nie rób. */
-    if ((g_MotorsCfg == NULL) || (g_SchedCfg == NULL)) {
-        return;
-    }
-
-    /* ===== 1) Pętla napędu — rampa + reverse-gate =====
-     * Rytm z CFG_Motors()->tick_ms (np. 20 ms ⇒ 50 Hz).
-     */
+    /* 1) Napęd — rampa + reverse-gate */
     if (App_TaskDue(now, &tTank, g_MotorsCfg->tick_ms)) {
-        DriveTest_Tick();                                // krok testu jazdy (nieblokujący)
-        Tank_Update();                                   // rampa, reverse-gate, mapowanie %→µs, balans torów
+
+        /* pomiar jittera interwału między wywołaniami Tank_Update() */
+        if (s_lastTankExec != 0u) {
+            const uint32_t dt = (uint32_t)(now - s_lastTankExec);
+            if (dt < s_jMin) s_jMin = dt;
+            if (dt > s_jMax) s_jMax = dt;
+            s_jSum += dt; s_jCnt++;
+        }
+        s_lastTankExec = now;
+
+        DriveTest_Tick();                 // nieblokujący krok testu jazdy
+        Tank_Update();                    // rampa + mapowanie %→µs
     }
 
-    /* ===== 2) Sensory (TF-Luna + TCS3472) =====
-     * Rytm z PERIOD_SENS_MS (wartość z CFG_Scheduler()->sens_ms).
-     */
+    /* 2) Sensory — rozfazowane Right ⇄ Left (mniejsze szczyty I²C) */
     if (App_TaskDue(now, &tSens, g_SchedCfg->sens_ms)) {
-        g_RightLuna  = TF_Luna_Right_Read();             // odczyt z prawego TF-Luna (I2C1)
-        g_LeftLuna   = TF_Luna_Left_Read();              // odczyt z lewego  TF-Luna (I2C3)
-        g_RightColor = TCS3472_Right_Read();             // odczyt z prawego TCS3472 (I2C1)
-        g_LeftColor  = TCS3472_Left_Read();              // odczyt z lewego  TCS3472 (I2C3)
+        if (s_sensPhase == 0u) {
+            g_RightLuna  = TF_Luna_Right_Read();   // I2C1: TF-Luna Right
+            g_RightColor = TCS3472_Right_Read();   // I2C1: TCS Right
+            s_sensPhase  = 1u;
+        } else {
+            g_LeftLuna   = TF_Luna_Left_Read();    // I2C3: TF-Luna Left
+            g_LeftColor  = TCS3472_Left_Read();    // I2C3: TCS Left
+            s_sensPhase  = 0u;
+        }
     }
 
-    /* ===== 3) OLED — panel 7 linii ===== */
+    /* 3) OLED — panel 7 linii */
     if (App_TaskDue(now, &tOLED, g_SchedCfg->oled_ms)) {
-        OLED_Panel_ShowSensors(&g_RightLuna, &g_LeftLuna,
-                               &g_RightColor, &g_LeftColor); // prezentacja na SSD1306
+        OLED_Panel_ShowSensors(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor);
     }
 
-    /* ===== 4) UART — panel w miejscu (ANSI) ===== */
+    /* 4) UART — panel + JIT linia (druk „po UART”, w tym samym takcie) */
     if (App_TaskDue(now, &tUART, g_SchedCfg->uart_ms)) {
-        DebugUART_SensorsDual(&g_RightLuna, &g_LeftLuna,
-                              &g_RightColor, &g_LeftColor);  // ten sam układ co OLED
+        DebugUART_SensorsDual(&g_RightLuna, &g_LeftLuna, &g_RightColor, &g_LeftColor);
+
+        if (s_jCnt > 0u) {
+            const uint32_t avg = (uint32_t)(s_jSum / s_jCnt);
+            DebugUART_PrintJitter(g_MotorsCfg->tick_ms, s_jMin, avg, s_jMax, 1u);
+        } else {
+            DebugUART_PrintJitter(g_MotorsCfg->tick_ms, 0u, 0u, 0u, 0u);
+        }
+        /* wyczyść okno statystyk do następnego cyklu UART */
+        s_jMin = 0xFFFFFFFFu; s_jMax = 0u; s_jSum = 0u; s_jCnt = 0u;
     }
 }

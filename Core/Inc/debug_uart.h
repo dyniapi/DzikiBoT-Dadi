@@ -4,15 +4,16 @@
  * @date    2025-11-03
  *
  * Co udostępnia:
- *   - DebugUART_Init()      : inicjalizacja z uchwytem HAL UART (np. &huart2).
- *   - DebugUART_Print()     : szybkie wysłanie stringa + CRLF (enqueue, bez blokowania).
- *   - DebugUART_Printf()    : printf -> enqueue + CRLF (bez blokowania).
+ *   - DebugUART_Init()       : inicjalizacja z uchwytem HAL UART (np. &huart2).
+ *   - DebugUART_Print()      : szybkie wysłanie stringa + CRLF (enqueue, bez blokowania).
+ *   - DebugUART_Printf()     : printf -> enqueue + CRLF (bez blokowania).
  *   - DebugUART_SensorsDual(): dwukolumnowy panel (RIGHT I2C1 | LEFT I2C3).
- *   - DebugUART_Dropped()   : licznik bajtów utraconych przy przepełnieniu kolejki TX.
+ *   - DebugUART_Dropped()    : licznik bajtów utraconych przy przepełnieniu kolejki TX.
+ *   - (NOWE) DebugUART_PrintJitter(): 1-liniowy raport jittera rytmu napędu (Tank).
  *
- * Uwaga:
- *   - Wysyłanie wykonywane przez HAL_UART_Transmit_IT z wewnętrznego bufora kołowego.
- *   - Gdy kolejka się zapełni, nadmiar jest dyskretnie odrzucany (bez blokowania pętli).
+ * Założenia:
+ *   - TX realizowany przez HAL_UART_Transmit_IT z wewnętrznego bufora kołowego.
+ *   - Brak HAL_MAX_DELAY i brak blokad pętli głównej — nadmiar danych jest odrzucany.
  */
 
 #ifndef DEBUG_UART_H_
@@ -49,6 +50,13 @@ void DebugUART_SensorsDual(
 
 /* Getter liczby bajtów, których nie udało się wstawić do kolejki (przepełnienie). */
 uint32_t DebugUART_Dropped(void);
+
+/* NOWE: 1-liniowy raport jittera; valid=0 → komunikat „zbieram próbki...” */
+void DebugUART_PrintJitter(uint32_t tick_ms,
+                           uint32_t jMin_ms,
+                           uint32_t jAvg_ms,
+                           uint32_t jMax_ms,
+                           uint8_t  valid);
 
 #ifdef __cplusplus
 }

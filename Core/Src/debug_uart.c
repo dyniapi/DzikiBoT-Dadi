@@ -1,16 +1,15 @@
 /**
  * @file    debug_uart.c
- * @brief   Debug panel UART (ANSI) — wysyłanie nieblokujące (IRQ) + licznik dropów.
- * @date    2025-11-03
+ * @brief   Debug panel UART (ANSI) — TX nieblokujące (IRQ) + licznik dropów.
+ * @date    2025-11-04
  *
  * Założenia:
  *   - Brak użycia HAL_MAX_DELAY, brak blokowania pętli głównej.
  *   - HAL_UART_Transmit_IT + wewnętrzny bufor kołowy TX (ring buffer).
  *   - Kompatybilne API z Twoim core.zip (Init/Print/Printf/SensorsDual).
- *
- * Wymagania:
  *   - Włączone NVIC dla USART2 (lub używanego UARTu).
  *   - W stm32l4xx_it.c: USARTx_IRQHandler wywołuje HAL_UART_IRQHandler(&huartx).
+ *   - (NOWE) Nagłówek: "DzikiBoT (Sensors)   UART dropped=X" — X odświeżany co 2 s.
  */
 
 #include "debug_uart.h"     // publiczne API tego modułu
@@ -34,6 +33,11 @@ static size_t s_active_len = 0;              // ile bajtów ma bieżąca porcja 
 
 /* Licznik “utraconych bajtów” przy przepełnieniu bufora (diagnostyka) */
 static volatile uint32_t s_tx_dropped = 0;
+
+/* Krótki cache nagłówka: wartość dropów odświeżana co 2 s, by nie "migała" */
+static uint32_t s_drop_cached = 0;           // ostatnia zapamiętana wartość
+static uint32_t s_drop_last_ts = 0;          // kiedy ostatnio zaktualizowano cache
+#define DEBUG_UART_DROP_REFRESH_MS  (2000u)  // co 2 sekundy odświeżamy wartość
 
 /* Krótkie makra sekcji krytycznej (blokada przerwań na modyfikację head/tail) */
 #ifndef ENTER_CRIT
@@ -115,6 +119,10 @@ void DebugUART_Init(UART_HandleTypeDef *huart)
     s_active_len = 0;               // brak aktywnej porcji
     s_tx_dropped = 0;               // wyzeruj licznik dropów
     EXIT_CRIT();                    // koniec resetu
+
+    /* Wyzeruj cache nagłówka */
+    s_drop_cached = 0;
+    s_drop_last_ts = HAL_GetTick();
 }
 
 /* Wysyła podany string + CRLF (enqueue, nieblokujące). */
@@ -130,10 +138,10 @@ void DebugUART_Printf(const char *fmt, ...)
 {
     if (!fmt) return;                               // brak formatu → nic
 
-    char buf[160];                                  // lokalny bufor formatowania (wystarczający na nasze linie)
+    char buf[160];                                  // lokalny bufor formatowania
     va_list ap;                                     // lista argumentów zmiennych
     va_start(ap, fmt);                              // start pobierania argumentów
-    (void)vsnprintf(buf, sizeof(buf), fmt, ap);     // sformatuj do bufora (z pilnowaniem rozmiaru)
+    (void)vsnprintf(buf, sizeof(buf), fmt, ap);     // sformatuj
     va_end(ap);                                     // koniec pobierania argumentów
 
     (void)DebugUART_Write(buf, strlen(buf));        // wrzuć sformatowaną treść
@@ -143,7 +151,7 @@ void DebugUART_Printf(const char *fmt, ...)
 /* Getter liczby bajtów utraconych (przepełnienia kolejki). */
 uint32_t DebugUART_Dropped(void)
 {
-    return s_tx_dropped;                            // proste odczytanie licznika
+    return s_tx_dropped;                            // prosty odczyt licznika
 }
 
 /* ========================= ANSI helper (priv) ======================== */
@@ -171,11 +179,19 @@ void DebugUART_SensorsDual(const TF_LunaData_t *RightLuna,
     const char *stR = RightLuna->frameReady ? "OK " : "NO FRAME"; // status prawej Luny
     const char *stL = LeftLuna->frameReady  ? "OK " : "NO FRAME"; // status lewej Luny
 
-    /* Nagłówek z diagnostyką dropów — pomoże namierzać przeciążenie kolejki */
-    (void)snprintf(line, sizeof(line),
-                   "DzikiBoT (Sensors)   UART dropped=%lu",
-                   (unsigned long)DebugUART_Dropped());
-    DebugUART_Print(line);
+    /* --- Nagłówek: "DzikiBoT (Sensors)   UART dropped=X" --- */
+    /*    X odświeżany co 2 sekundy (cache), by nie zmieniał się przy każdym repaint. */
+    {
+        const uint32_t now = HAL_GetTick();
+        if ((uint32_t)(now - s_drop_last_ts) >= DEBUG_UART_DROP_REFRESH_MS) {
+            s_drop_cached  = DebugUART_Dropped();   // pobierz aktualną wartość
+            s_drop_last_ts = now;                   // zapamiętaj czas odświeżenia
+        }
+        (void)snprintf(line, sizeof(line),
+                       "DzikiBoT (Sensors)   UART dropped=%lu",
+                       (unsigned long)s_drop_cached);
+        DebugUART_Print(line);
+    }
 
     DebugUART_Print("-------------------------------+-------------------------------------");
     DebugUART_Print("            RIGHT (I2C1)       |               LEFT (I2C3)");
@@ -248,4 +264,28 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
     EXIT_CRIT();                                     // koniec sekcji krytycznej
 
     try_kick_tx();                                   // jeśli są kolejne bajty — start kolejnej porcji
+}
+
+/* ====================== NOWE: linia z jitterem ======================= */
+/* Proste API do dopisania 1 linii z min/avg/max jittera rytmu Tank.
+ * Wołaj po DebugUART_SensorsDual(...) (np. w bloku tUART w App_Tick).
+ * Gdy valid==0, drukuje komunikat „zbieram próbki...”.
+ */
+void DebugUART_PrintJitter(uint32_t tick_ms,
+                           uint32_t jMin_ms,
+                           uint32_t jAvg_ms,
+                           uint32_t jMax_ms,
+                           uint8_t  valid)
+{
+
+	 DebugUART_Print("-------------------------------+-------------------------------------");
+	if (!valid) {
+        DebugUART_Printf("     [JIT] Tank tick=%lums  (zbieram próbki...)", (unsigned long)tick_ms);
+        return;
+    }
+    DebugUART_Printf("     [JIT] Tank tick=%lums  min=%lums  avg=%lums  max=%lums",
+                     (unsigned long)tick_ms,
+                     (unsigned long)jMin_ms,
+                     (unsigned long)jAvg_ms,
+                     (unsigned long)jMax_ms);
 }
