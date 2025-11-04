@@ -51,6 +51,7 @@
 /* ========================================================================== */
 /*  Interwały zadań — UTRZYMUJEMY STARE NAZWY MAKRO, ale źródłem jest config. */
 /*  Dzięki temu nie dotykamy reszty kodu, a wartości stroimy w config.c.      */
+/*  Uwaga: period == 0 oznacza „zawsze” (wykonywane co iterację).              */
 /* ========================================================================== */
 #ifndef PERIOD_SENS_MS
 #  define PERIOD_SENS_MS  (CFG_Scheduler()->sens_ms)   // odczyt sensorów (TF-Luna/TCS)
@@ -65,7 +66,8 @@
 /* ============================================================================
  *  Stan lokalny modułu app (wyłącznie dla App_Init/App_Tick)
  *  (Trzymamy tu tylko to, co potrzebne do rytmu zadań.)
- * ========================================================================== */
+ * ============================================================================
+ */
 
 /* Bufory danych sensorów — tak jak było w Twoim main.c */
 static TF_LunaData_t   g_RightLuna = {0};   // TF-Luna (Right, I2C1)
@@ -82,25 +84,44 @@ static uint32_t tSens = 0;  // co PERIOD_SENS_MS — odczyty TF-Luna i TCS3472
 static uint32_t tOLED = 0;  // co PERIOD_OLED_MS — odświeżenie OLED
 static uint32_t tUART = 0;  // co PERIOD_UART_MS — odświeżenie panelu UART
 
-/* Narzędzie do harmonogramu: zwraca true, gdy minął okres zadania i uaktualnia znacznik. */
+/* --------------------------------------------------------------------------
+ *  Narzędzia do harmonogramu:
+ *   - App_TaskDue(): zwraca true, gdy minął okres zadania i uaktualnia znacznik,
+ *                   przy czym „trzyma siatkę” czasu (bez dryfu przy spóźnieniach).
+ *   - App_TaskPrime(): ustawia znacznik tak, aby pierwsze wywołanie poszło natychmiast.
+ * -------------------------------------------------------------------------- */
 static inline bool App_TaskDue(uint32_t now, uint32_t *last_run_ms, uint32_t period_ms)
 {
-    if (period_ms == 0U) {                   // zabezpieczenie: „0” traktujemy jako „zawsze”
+    if (period_ms == 0U) {                   // „0” = zawsze (uwaga na obciążenie CPU/I²C/OLED)
         *last_run_ms = now;
         return true;
     }
 
-    if ((uint32_t)(now - *last_run_ms) >= period_ms) {
-        *last_run_ms = now;
+    const uint32_t elapsed = (uint32_t)(now - *last_run_ms);
+    if (elapsed >= period_ms) {
+        /* Anti-drift: przeskocz o wielokrotność okresu, aby utrzymać fazę.
+           Jeśli spóźnienie jest większe niż 2x period, nie gonimy wielu razy —
+           po prostu przestawiamy siatkę o największą wielokrotność mieszczącą się w elapsed. */
+        const uint32_t steps = (elapsed / period_ms);
+        *last_run_ms += period_ms * steps;
         return true;
     }
-
     return false;
+}
+
+static inline void App_TaskPrime(uint32_t now, uint32_t *last_run_ms, uint32_t period_ms)
+{
+    if (period_ms == 0U) {
+        *last_run_ms = now;                  // „zawsze” — i tak poleci natychmiast
+    } else {
+        *last_run_ms = now - period_ms;      // unsigned wrap ⇒ pierwsza iteracja odpala natychmiast
+    }
 }
 
 /* ============================================================================
  *  App_Init() — jednorazowa inicjalizacja aplikacji (po initach Cube/HAL)
- * ========================================================================== */
+ * ============================================================================
+ */
 void App_Init(void)
 {
     /* 0) Cache konfiguracji — pobieramy raz (stałe struktury w config.c) */
@@ -136,17 +157,18 @@ void App_Init(void)
     g_RightColor = TCS3472_Right_Read();
     g_LeftColor  = TCS3472_Left_Read();
 
-    /* 6) Zerujemy znaczniki soft-timerów — aby pierwsza iteracja poszła „od razu” */
+    /* 6) Prime soft-timerów — aby pierwsza iteracja poszła „od razu” */
     const uint32_t now = HAL_GetTick();
-    tTank = now;   // pętla napędu
-    tSens = now;   // sensory
-    tOLED = now;   // OLED
-    tUART = now;   // UART
+    App_TaskPrime(now, &tTank, g_MotorsCfg->tick_ms);
+    App_TaskPrime(now, &tSens, g_SchedCfg->sens_ms);
+    App_TaskPrime(now, &tOLED, g_SchedCfg->oled_ms);
+    App_TaskPrime(now, &tUART, g_SchedCfg->uart_ms);
 }
 
 /* ============================================================================
  *  App_Tick() — nieblokująca pętla zadań cyklicznych (wołana w każdej iteracji while(1))
- * ========================================================================== */
+ * ============================================================================
+ */
 void App_Tick(void)
 {
     /* Pobieramy aktualny czas w ms (różnicowanie now - tX bezpieczne przy overflow) */
