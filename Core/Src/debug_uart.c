@@ -183,7 +183,7 @@ void DebugUART_SensorsDual(const TF_LunaData_t *RightLuna,
 
     /* DIST – filtr (mediana) */
     (void)snprintf(line, sizeof(line),
-                   " Dist:  %4ucm  (%-8s)     | Dist:  %4ucm  (%-8s)",
+                   " Dist:  %4u cm  (%-8s)    | Dist:  %4u cm  (%-8s)",
                    (unsigned)RightLuna->distance_filt, stR,
                    (unsigned)LeftLuna->distance_filt,  stL);
     DebugUART_Print(line);
